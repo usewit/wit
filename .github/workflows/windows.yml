@@ -1,0 +1,46 @@
+# Build the Windows installer (NSIS): Wit_<version>_x64-setup.exe. It installs
+# per user, without admin rights, and fetches WebView2 if Windows lacks it.
+# Runs by hand (Actions → Windows → Run workflow) or from the Release workflow
+# on a version tag. The MSVC build links the WebView2 loader into the exe, so
+# no WebView2Loader.dll is needed (unlike the windows-gnu build from WSL).
+# Not code-signed yet: Windows SmartScreen warns on first run ("More info" →
+# "Run anyway").
+name: Windows
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web app
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build the installer
+        working-directory: desktop
+        shell: bash
+        run: |
+          # The web app is already built above.
+          npx -y @tauri-apps/cli@2 build --bundles nsis --config '{"build":{"beforeBuildCommand":""}}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wit-Windows
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

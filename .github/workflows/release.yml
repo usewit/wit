@@ -1,6 +1,6 @@
-# Make a release from a version tag: push v0.2.0 and this builds Linux and
-# macOS, then opens a draft GitHub release with every file attached. Check
-# it, then press Publish on the release page.
+# Make a release from a version tag: push v0.2.0 and this builds Windows,
+# Linux and macOS, then opens a draft GitHub release with every file
+# attached. Check it, then press Publish on the release page.
 # The tag must match "version" in desktop/tauri.conf.json, since the files
 # are named after it (Wit_0.2.0_amd64.deb).
 name: Release
@@ -22,6 +22,10 @@ jobs:
             exit 1
           fi
 
+  windows:
+    needs: check
+    uses: ./.github/workflows/windows.yml
+
   linux:
     needs: check
     uses: ./.github/workflows/linux.yml
@@ -32,7 +36,7 @@ jobs:
     secrets: inherit
 
   release:
-    needs: [linux, macos]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

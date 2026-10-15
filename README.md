@@ -49,17 +49,27 @@ To use it from another device on your network, start it with
 links open in the default browser.
 
 ```bash
-desktop/build-windows.sh   # cross-builds from WSL with cargo-zigbuild
+desktop/build-windows.sh   # cross-builds from WSL
 ```
 
-The output is `target/Wit/`: `Wit.exe`, `WebView2Loader.dll`, `web/` and
-`fonts/`. Copy the whole folder; the exe needs the other three beside it. The books are listed
-in `%APPDATA%\app.wit.desktop\wit.json` (or `WIT_WORKSPACE`). Book
-folders can be Windows paths or WSL paths such as
+It makes two things:
+
+- `target/x86_64-pc-windows-gnu/release/bundle/nsis/Wit_<version>_x64-setup.exe`,
+  an installer. It installs for the current user without admin rights and
+  fetches WebView2 if Windows lacks it.
+- `target/Wit/`, a folder to run without installing: `Wit.exe`,
+  `WebView2Loader.dll`, `web/` and `fonts/`. Copy the whole folder; the exe
+  needs the other three beside it.
+
+The books are listed in `%APPDATA%\app.wit.desktop\wit.json` (or
+`WIT_WORKSPACE`). Book folders can be Windows paths or WSL paths such as
 `\\wsl.localhost\Ubuntu\home\...`.
 
-The build uses MinGW if it is installed (`sudo apt install mingw-w64`), and
-otherwise cargo-zigbuild.
+The build needs NSIS (`sudo apt install nsis`) and uses MinGW if it is
+installed (`sudo apt install mingw-w64`), otherwise cargo-zigbuild. Installers
+for others come from the Windows workflow (Actions → Windows → Run workflow,
+or a release tag), which builds on Windows. They aren't code-signed yet, so
+SmartScreen warns the first time ("More info" → "Run anyway").
 
 ## Desktop app (Linux)
 
@@ -84,8 +94,9 @@ Set `version` in `desktop/tauri.conf.json`, commit, then tag and push:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-The Release workflow builds Linux and macOS and opens a draft GitHub release
-with the AppImage, .deb, .rpm and .dmg attached. Check it and press Publish.
+The Release workflow builds Windows, Linux and macOS and opens a draft GitHub
+release with the Windows installer, AppImage, .deb, .rpm and .dmg attached.
+Check it and press Publish.
 
 ## Documents
 
