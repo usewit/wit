@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The editor talks to its own in-process server over HTTP, so it needs no Tauri commands.",
+  "windows": ["main"],
+  "permissions": []
+}

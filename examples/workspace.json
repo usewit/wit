@@ -1,0 +1,6 @@
+{
+  "books": [
+    { "id": "the-lantern-keeper", "dir": "examples/the-lantern-keeper", "source": "story.md", "config": "book.yaml" },
+    { "id": "the-patrol", "dir": "examples/the-patrol", "source": "script.fountain", "config": "book.yaml" }
+  ]
+}

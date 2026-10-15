@@ -1,0 +1,52 @@
+# Build the Linux app: an AppImage (any distro), a .deb and an .rpm.
+# Runs by hand (Actions → Linux → Run workflow) or from the Release workflow
+# on a version tag.
+# Ubuntu 22.04, not the latest: the binaries need the build machine's glibc or
+# newer, so an older one runs on more distros.
+name: Linux
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web app
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build the AppImage, .deb and .rpm
+        working-directory: desktop
+        run: |
+          # The web app is already built above.
+          npx -y @tauri-apps/cli@2 build --config '{"build":{"beforeBuildCommand":""}}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wit-Linux
+          path: |
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+          if-no-files-found: error

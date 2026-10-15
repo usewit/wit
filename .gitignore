@@ -1,0 +1,15 @@
+/target/
+web/node_modules/
+web/dist/
+desktop/gen/
+
+# Fonts whose licence forbids sharing them (e.g. Cambria). Wit still uses
+# them on this machine; they are never committed.
+fonts/local/
+
+# This computer's list of open books. A fresh checkout gets one from
+# examples/workspace.json on first run.
+/wit.json
+
+# Version history Wit keeps inside the sample documents when you try them.
+examples/*/.wit/
