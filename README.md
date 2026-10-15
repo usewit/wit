@@ -5,6 +5,10 @@ screenplays and stage plays. You write plain text on the left (Markdown, or
 Fountain for scripts) and see the real printed pages on the right. Typst lays out the pages and runs inside
 the server, so pages update a few milliseconds after you stop typing.
 
+![A book in Split mode: Markdown on the left, the printed page with its illustration on the right](docs/images/book-light.png)
+
+![A screenplay in the Dark theme: Fountain text on the left, the industry-format page on the right](docs/images/script-dark.png)
+
 ## Run
 
 ```bash
