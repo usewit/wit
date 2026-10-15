@@ -155,8 +155,9 @@ side by side (`^` is accepted and printed one after the other).
 Wit ships ten open fonts (see `fonts/README.md`): EB Garamond, Crimson Pro,
 Libre Baskerville, Literata, Lora, Alegreya, Source Serif 4, Andika, Atkinson
 Hyperlegible and Courier Prime. Page setup also lists every font on the
-computer. Fonts you may not share, like Cambria, go in `fonts/local/`, which
-git ignores.
+computer, so a font you may not share, like Cambria, belongs in the
+computer's own fonts (see `fonts/README.md`), never in `fonts/`: everything
+there ships with the app.
 
 Page sizes cover KDP's whole paperback list (5 × 8 in up to 8.5 × 11 in),
 IngramSpark's mass-market sizes, the UK formats (A, B, Demy, Royal), ISO A

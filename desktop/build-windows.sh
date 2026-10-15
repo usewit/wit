@@ -26,7 +26,7 @@ mkdir -p target/Wit/fonts
 cp "$out/wit-desktop.exe" target/Wit/Wit.exe
 cp "$out/WebView2Loader.dll" target/Wit/
 cp -r web/dist target/Wit/web
-# Not fonts/local/: fonts there may not be shared.
+# The open fonts and their licences, as tauri.conf.json bundles them.
 cp -r fonts/*.ttf fonts/README.md fonts/licenses target/Wit/fonts/
 echo "Built:"
 ls -1 "$out"/bundle/nsis/*-setup.exe

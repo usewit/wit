@@ -21,6 +21,10 @@ The static TTFs come from Google Fonts (Regular, Bold, Italic, Bold Italic).
 
 ## Your own fonts
 
-Put fonts you may not share (Cambria, a bought typeface) in `fonts/local/`.
-Wit uses them on this computer and Page setup lists them under "On this
-computer", but git ignores that folder, so they are never published.
+Install fonts you may not share (Cambria, a bought typeface) on the computer,
+not in this folder: everything here ships with the app. Wit uses the
+computer's fonts and Page setup lists them under "On this computer".
+
+- Windows: right-click the font file, then Install.
+- Mac: open it in Font Book.
+- Linux and WSL: copy it to `~/.local/share/fonts/`.
