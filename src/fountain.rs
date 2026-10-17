@@ -4,10 +4,12 @@
 //! layout follows from the writing. A line in capitals after a blank line is a
 //! character; the lines under it are their dialogue; `INT.` / `EXT.` start a
 //! scene; `CUT TO:` is a transition. Supported:
-//!   title page (`Title:`, `Credit:`, `Author:`, `Source:`, `Draft date:`, `Contact:`),
+//!   title page (`Title:`, `Credit:`, `Author:`, `Source:`, `Draft date:`, `Contact:`;
+//!   the first line must be one of the known keys),
 //!   scene headings (and forced `.HEADING`, scene numbers `#12#`), action
 //!   (forced `!`), characters (forced `@`, extensions, dual `^`), parentheticals,
-//!   dialogue, transitions (forced `>`), centred text (`> text <`), lyrics (`~`),
+//!   dialogue, transitions (forced `>`), centred text (`> text <`), lyrics (`~`,
+//!   also inside dialogue), indented action (leading spaces kept, a tab is four),
 //!   page breaks (`===`), `*italic*`, `**bold**`, `***both***`, `_underline_`,
 //!   and `\` escapes. Notes `[[ ]]`, boneyard `/* */` and synopses (`=`) don't print.
 //!   Sections (`#`) don't print in a screenplay; in a stage play they are the
@@ -123,6 +125,13 @@ fn is_transition(t: &str) -> bool {
     t.ends_with("TO:") && !t.chars().any(char::is_lowercase)
 }
 
+/// Title page keys a script may start with (any case). Only these open a title
+/// page, so a first line like "Fade in:" stays part of the script.
+pub const TITLE_KEYS: &[&str] = &[
+    "title", "credit", "author", "authors", "source", "draft date", "date", "contact", "contact info",
+    "copyright", "notes", "revision", "format", "watermark", "font",
+];
+
 /// The title page: `Key: value` lines at the very top, up to the first blank line.
 fn title_page(lines: &[(usize, &str)]) -> (Vec<(String, Vec<String>)>, usize) {
     let mut fields: Vec<(String, Vec<String>)> = vec![];
@@ -130,9 +139,10 @@ fn title_page(lines: &[(usize, &str)]) -> (Vec<(String, Vec<String>)>, usize) {
     let first = lines.first().map(|(_, l)| *l).unwrap_or("");
     let looks_like_key = |l: &str| {
         let Some((k, _)) = l.split_once(':') else { return false };
-        !k.is_empty() && k.len() <= 20 && k.chars().any(char::is_lowercase) && !l.starts_with(' ') && !l.starts_with('\t') && k.chars().all(|c| c.is_alphanumeric() || c == ' ')
+        !k.is_empty() && k.len() <= 20 && !l.starts_with(' ') && !l.starts_with('\t') && k.chars().all(|c| c.is_alphanumeric() || c == ' ')
     };
-    if !looks_like_key(first) || is_transition(first.trim()) {
+    let known = first.split_once(':').is_some_and(|(k, _)| TITLE_KEYS.contains(&k.trim().to_lowercase().as_str()));
+    if !looks_like_key(first) || !known {
         return (fields, 0);
     }
     while i < lines.len() {
@@ -229,7 +239,7 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
             continue;
         }
         if let Some(rest) = t.strip_prefix('!') {
-            i = action(&lines, i, rest, &mark, &mut out);
+            i = action(&lines, i, rest, &mark, &mut out, None);
             continue;
         }
         let forced_scene = t.starts_with('.') && !t.starts_with("..");
@@ -259,15 +269,22 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
             i += 1;
             continue;
         }
-        if let Some(rest) = t.strip_prefix('~') {
-            out.push_str(&format!("#lyric[{mark}{}]\n\n", inline(rest.trim())));
-            i += 1;
+        if t.starts_with('~') {
+            // Lyrics: consecutive `~` lines are one block, each line break kept.
+            let mut parts = vec![];
+            while let Some(rest) = lines.get(i).and_then(|(_, l)| l.trim().strip_prefix('~')) {
+                parts.push(format!("#metadata({})<q>{}", line_no(i), inline(rest.trim())));
+                i += 1;
+            }
+            out.push_str(&format!("#lyric[{}]\n\n", parts.join(" \\\n")));
             continue;
         }
         let forced_cue = t.starts_with('@');
         if forced_cue || (prev_blank && !next_blank && is_cue(t)) {
             let name = t.trim_start_matches('@').trim_end_matches('^').trim();
-            out.push_str(&format!("#cue[{mark}{}]\n", inline(name)));
+            // A forced name prints as written ("McCLANE"); others in capitals.
+            let forced = if forced_cue { "(forced: true)" } else { "" };
+            out.push_str(&format!("#cue{forced}[{mark}{}]\n", inline(name)));
             i += 1;
             // Dialogue runs to the next blank line; a line of just spaces keeps it going.
             let mut speech: Vec<String> = vec![];
@@ -287,6 +304,9 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
                 if lt.starts_with('(') && lt.ends_with(')') {
                     flush(&mut speech, &mut out);
                     out.push_str(&format!("#paren[{m}{}]\n", inline(lt)));
+                } else if let Some(sung) = lt.strip_prefix('~') {
+                    // A sung line: in italics, where the dialogue goes.
+                    speech.push(format!("{m}#emph[{}]", inline(sung.trim())));
                 } else {
                     speech.push(format!("{m}{}", inline(lt)));
                 }
@@ -296,21 +316,35 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
             out.push('\n');
             continue;
         }
-        i = action(&lines, i, t, &mark, &mut out);
+        i = action(&lines, i, t, &mark, &mut out, Some(src));
     }
     Converted { typst: out, map }
 }
 
-/// Action: consecutive lines, each line break kept. Returns the next line index.
-fn action(lines: &[(usize, &str)], mut i: usize, first: &str, mark: &str, out: &mut String) -> usize {
-    let mut parts = vec![format!("{mark}{}", inline(first))];
+/// Action: consecutive lines, each line break kept, and the spaces or tabs a
+/// line starts with. `src` is the file before notes were blanked out, so a
+/// note at the start of a line doesn't indent it; `None` (forced `!` action)
+/// leaves the first line unindented. Returns the next line index.
+fn action(lines: &[(usize, &str)], mut i: usize, first: &str, mark: &str, out: &mut String, src: Option<&str>) -> usize {
+    let mut parts = vec![format!("{mark}{}{}", src.map_or(String::new(), |s| indent(s, lines[i])), inline(first))];
     i += 1;
-    while i < lines.len() && !lines[i].1.trim().is_empty() {
-        parts.push(format!("#metadata({})<q>{}", i + 1, inline(lines[i].1.trim())));
+    // A `~` line is a lyric even here.
+    while i < lines.len() && !lines[i].1.trim().is_empty() && !lines[i].1.trim().starts_with('~') {
+        let lead = src.map_or(String::new(), |s| indent(s, lines[i]));
+        parts.push(format!("#metadata({})<q>{lead}{}", i + 1, inline(lines[i].1.trim())));
         i += 1;
     }
     out.push_str(&format!("#action[{}]\n\n", parts.join(" \\\n")));
     i
+}
+
+/// A line's indentation as non-breaking spaces (a tab is four): the leading
+/// spaces and tabs of the original line, up to where its text starts.
+fn indent(src: &str, (at, line): (usize, &str)) -> String {
+    let text_at = line.len() - line.trim_start().len();
+    let orig = src.get(at..at + text_at).unwrap_or("");
+    let n: usize = orig.chars().take_while(|c| *c == ' ' || *c == '\t').map(|c| if c == '\t' { 4 } else { 1 }).sum();
+    "~".repeat(n)
 }
 
 #[cfg(test)]
@@ -339,7 +373,7 @@ mod tests {
     fn forced_elements_notes_and_numbers() {
         let out = t(".flashback #3#\n\n@McCLANE\nYippee [[a note]] ki-yay.\n\n!LOUD NOISES\n\n===\n");
         assert!(out.contains("#scene([#metadata(1)<q>flashback], num: [3])"), "{out}");
-        assert!(out.contains("#cue[#metadata(3)<q>McCLANE]"), "{out}");
+        assert!(out.contains("#cue(forced: true)[#metadata(3)<q>McCLANE]"), "{out}");
         assert!(out.contains("Yippee ki\\-yay."), "{out}");
         assert!(out.contains("#action[#metadata(6)<q>LOUD NOISES]"), "{out}");
         assert!(out.contains("#pagebreak(weak: true)"), "{out}");
@@ -366,6 +400,42 @@ mod tests {
         let out = t("FADE IN:\n\nINT. ROOM - DAY\n");
         assert!(out.starts_with("#titlepage()"), "{out}");
         assert!(out.contains("#scene("), "{out}");
+    }
+
+    #[test]
+    fn only_known_keys_open_a_title_page() {
+        let out = t("Fade in:\n\nINT. ROOM - DAY\n");
+        assert!(out.starts_with("#titlepage()"), "{out}");
+        assert!(out.contains("#action[#metadata(1)<q>Fade in:]"), "{out}");
+        let out = t("TITLE: Big Fish\nAUTHOR: John August\n\nINT. ROOM - DAY\n");
+        assert!(out.contains("#titlepage(title: [Big Fish], credit: none, author: [John August]"), "{out}");
+        assert!(out.contains("#scene([#metadata(4)<q>INT. ROOM \\- DAY]"), "{out}");
+    }
+
+    #[test]
+    fn lyrics_in_blocks_and_in_dialogue() {
+        let out = t("~Sing a song\n~of sixpence\n\nMARIA\nHello.\n~La la la\n");
+        assert!(out.contains("#lyric[#metadata(1)<q>Sing a song \\\n#metadata(2)<q>of sixpence]"), "{out}");
+        assert!(out.contains("#speech[#metadata(5)<q>Hello. \\\n#metadata(6)<q>#emph[La la la]]"), "{out}");
+        assert!(!out.contains('~'), "{out}");
+        let out = t("\nShe sings:\n~La la\n");
+        assert!(out.contains("#action[#metadata(2)<q>She sings:]"), "{out}");
+        assert!(out.contains("#lyric[#metadata(3)<q>La la]"), "{out}");
+    }
+
+    #[test]
+    fn forced_action_runs_on() {
+        let out = t("!BOOM\nThe walls shake.\n");
+        assert!(out.contains("#action[#metadata(1)<q>BOOM \\\n#metadata(2)<q>The walls shake.]"), "{out}");
+        assert!(!out.contains("#cue"), "{out}");
+    }
+
+    #[test]
+    fn action_keeps_its_indentation() {
+        let out = t("\nShe waits.\n    Indented.\n\tTabbed.\n[[note]] Not indented.\n");
+        assert!(out.contains("#metadata(3)<q>~~~~Indented."), "{out}");
+        assert!(out.contains("#metadata(4)<q>~~~~Tabbed."), "{out}");
+        assert!(out.contains("#metadata(5)<q>Not indented."), "{out}");
     }
 
     #[test]

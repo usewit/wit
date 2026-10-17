@@ -223,10 +223,17 @@ enum Kind {
     Choice(&'static [&'static str]),
     /// A font family name.
     Font,
+    /// A style preset's id, or "" for none.
+    Style,
 }
+
+/// Languages a document can be written in, as Typst (ISO 639-1) codes. They
+/// decide hyphenation and smart quotes, and the language of exported files.
+pub const LANGUAGES: &[&str] = &["en", "ro", "de", "es", "fr", "it", "nl", "pt"];
 
 /// Keys the settings panel may change, with their allowed values.
 const EDITABLE: &[(&str, Kind)] = &[
+    ("lang", Kind::Choice(LANGUAGES)),
     ("bleed_mm", Kind::Num(0.0, 10.0)),
     ("margin_mm", Kind::Num(5.0, 40.0)),
     ("margin_inner_mm", Kind::Num(5.0, 40.0)),
@@ -247,6 +254,7 @@ const EDITABLE: &[(&str, Kind)] = &[
     ("body_font_name", Kind::Font),
     ("scene_heading_bold", Kind::Bool),
     ("scene_numbers", Kind::Bool),
+    ("style_preset", Kind::Style),
 ];
 
 fn fmt_num(n: f64) -> String {
@@ -272,6 +280,13 @@ pub fn updates_from_json(map: &Map<String, Value>) -> Result<Vec<(String, String
                 let s = v.as_str().unwrap_or_default();
                 if !opts.contains(&s) {
                     bail!("{key} must be one of {}", opts.join(", "));
+                }
+                format!("\"{s}\"")
+            }
+            Kind::Style => {
+                let s = v.as_str().unwrap_or_default();
+                if !s.is_empty() && !style_presets().iter().any(|p| p.id == s) {
+                    bail!("{key} must be one of the Page setup presets");
                 }
                 format!("\"{s}\"")
             }
@@ -452,6 +467,14 @@ mod tests {
                 assert!(preset(name).is_some(), "{}: unknown size {name}", p.id);
             }
         }
+    }
+
+    #[test]
+    fn language_is_a_choice() {
+        let m = serde_json::json!({ "lang": "de" });
+        assert_eq!(updates_from_json(m.as_object().unwrap()).unwrap(), vec![("lang".into(), "\"de\"".into())]);
+        let m = serde_json::json!({ "lang": "xx" });
+        assert!(updates_from_json(m.as_object().unwrap()).is_err());
     }
 
     #[test]

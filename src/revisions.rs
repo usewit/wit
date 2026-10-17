@@ -8,6 +8,7 @@
 //! latest ten are kept. Naming a revision clears them and the count starts over.
 
 use anyhow::{Result, anyhow};
+use crate::words;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -142,9 +143,10 @@ impl History {
         Ok(())
     }
 
-    /// Everything that can be looked at or brought back, newest first.
-    pub fn entries(&self) -> Vec<Entry> {
-        let words = |id: &str| self.read(id).map(|t| t.split_whitespace().count()).unwrap_or(0);
+    /// Everything that can be looked at or brought back, newest first. Words
+    /// are counted like the statistics sidebar does, as prose or as a `script`.
+    pub fn entries(&self, script: bool) -> Vec<Entry> {
+        let words = |id: &str| self.read(id).map(|t| words::count(&t, script)).unwrap_or(0);
         let mut v: Vec<Entry> = self
             .revisions()
             .into_iter()

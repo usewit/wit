@@ -3,10 +3,10 @@
 // (words, characters, paragraphs, chapters, pages), with ring gauges toward a word
 // or page target. Targets are kept per book, on this computer.
 
-import type { Text } from "@codemirror/state";
+import { Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Command } from "./commands";
-import { classify, titleEnd, type ScriptKind } from "./fountain";
+import { classify, stripHidden, titleEnd, type ScriptKind } from "./fountain";
 import { store } from "./store";
 
 type DocKind = "book" | "essay" | ScriptKind;
@@ -25,6 +25,8 @@ interface Deps {
   /** A sidebar appeared or went, so the editor can measure again. */
   changed(): void;
   enabled(): boolean;
+  /** Sidebars don't show in Focus mode; leave it to show one. */
+  leaveFocus(): void;
 }
 
 interface Item { line: number; level: number; title: string; scene: boolean; words: number }
@@ -49,7 +51,9 @@ function plainInline(s: string): string {
   return s
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/<[^>]+>/g, "")
+    // Only the HTML Wit understands is markup; any other <word> prints as typed.
+    .replace(/<!--.*?-->/g, "")
+    .replace(/<\/?u>|<br\s*\/?>/gi, "")
     .replace(/\\(.)/g, "$1")
     .replace(/[*_~`]/g, "");
 }
@@ -94,9 +98,11 @@ function analyzeProse(doc: Text, kind: DocKind): Stats {
   return s;
 }
 
-function analyzeScript(doc: Text, kind: ScriptKind): Stats {
+function analyzeScript(src: Text, kind: ScriptKind): Stats {
   const s: Stats = { words: 0, chars: 0, charsNoSpaces: 0, paragraphs: 0, parts: 0, speeches: 0, outline: [] };
   const lineWords: number[] = [];
+  // Notes and boneyard, even across lines, are blanked out first, as in print.
+  const doc = Text.of(stripHidden(src.toString()).split("\n"));
   const title = titleEnd(doc);
   let section = 0;
   let inBlock = false;
@@ -105,8 +111,8 @@ function analyzeScript(doc: Text, kind: ScriptKind): Stats {
     const c = raw ? classify(doc, n, kind, title) : null;
     let text = "";
     if (!raw) inBlock = false;
-    else if (c === "title" || c === "synopsis" || c === "break" || raw.startsWith("[[")) {
-      // Not part of the script's words (title page, notes to self, page breaks).
+    else if (c === "title" || c === "synopsis" || c === "break") {
+      // Not part of the script's words (title page, synopses, page breaks).
     } else if (c === "section") {
       const level = /^#+/.exec(raw)![0].length;
       section = level;
@@ -318,13 +324,30 @@ export function initSidebars(d: Deps) {
     }
   }
 
+  // A script's pages count from after its title page, which prints when the
+  // book's Title page setting is on. Asked again when the page count changes,
+  // as turning the title page on or off does.
+  const titlePage = { key: "", pages: 1 };
+  function titlePages(): number {
+    const key = `${d.bookId()}:${d.pageCount()}`;
+    if (titlePage.key !== key) {
+      titlePage.key = key;
+      fetch(`/api/books/${d.bookId()}/settings`).then((r) => r.json()).then((j) => {
+        const n = j.settings?.include_title_page === false ? 0 : 1;
+        if (titlePage.key === key && n !== titlePage.pages) { titlePage.pages = n; renderStats(); }
+      }).catch(() => {});
+    }
+    return titlePage.pages;
+  }
+
   function renderStats() {
     if (!stats || statsEl.hidden) return;
     const names = NAMES[d.kind()];
-    const pages = d.pageCount();
+    const all = d.pageCount();
+    const pages = isScript() && all ? Math.max(0, all - titlePages()) : all;
     const t = target();
     tile("words", stats.words, t.words, wordsIn);
-    tile("pages", pages || null, t.pages, pagesIn);
+    tile("pages", all ? pages : null, t.pages, pagesIn);
 
     // Reading at about 230 words a minute; a script page is about a minute on screen.
     const minutes = isScript() ? pages : Math.round(stats.words / 230);
@@ -352,6 +375,7 @@ export function initSidebars(d: Deps) {
   }
 
   function focusTarget(i: HTMLInputElement) {
+    d.leaveFocus();
     if (!statsOn()) setStats(true);
     i.focus();
     i.select();

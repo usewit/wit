@@ -339,7 +339,7 @@ main.layout-pages .editor-pane { display: none; }
 /* Lighter text: the Light weight for ordinary text; bold stays bold. */
 :root[data-light-text] .cm-content { font-weight: 300; }
 :root[data-light-text] .font-sample.has-light { font-weight: 300; }
-.font-light { color: var(--muted); font-size: 12px; }
+.font-light { color: var(--muted); font-size: 14px; }
 .prefs .light-note { margin: -4px 0 4px 30px; font-size: 14px; }
 .prefs .light-note:empty { display: none; }
 .cm-u { text-decoration: underline 1.5px; text-underline-offset: 0.18em; }
@@ -357,14 +357,15 @@ main.layout-pages .editor-pane { display: none; }
   align-items: center;
   gap: 2px;
   padding: 5px 8px;
-  border-radius: 999px;
+  border-radius: 22px;
   background: color-mix(in srgb, var(--raised) 92%, transparent);
   backdrop-filter: blur(8px);
   border: 1px solid var(--line);
   box-shadow: var(--lift);
   max-width: calc(100% - 24px);
-  overflow-x: auto;
-  opacity: 0.55;
+  flex-wrap: wrap;
+  justify-content: center;
+  opacity: 0.94;
   transition: opacity 0.2s;
 }
 .dock:hover, .dock:focus-within { opacity: 1; }
@@ -395,6 +396,10 @@ body.dock-hidden .dock, body.focus .dock { display: none; }
 }
 .zoom { display: flex; gap: 10px; align-items: center; }
 .preview-tools .seg button { font-size: 14px; }
+/* In a narrow pane the page count gives way (shortened), not the tabs or zoom. */
+.preview-tools { flex-wrap: wrap; }
+#page-count { flex: 1 1 8em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.zoom input { min-width: 70px; flex: 1 1 140px; }
 #changes-since { flex: 1; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- changes since the latest named revision (right pane) ---- */
@@ -440,7 +445,7 @@ main.layout-pages .preview-pane .seg { display: none; }
 .page:hover img { box-shadow: var(--lift); }
 .page.current img { outline: 3px solid var(--accent); outline-offset: 5px; }
 .page.current span { color: var(--accent); font-weight: 700; }
-.page span { display: block; margin-top: 8px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.page span { display: block; margin-top: 8px; color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
 .error {
   margin: 8px 18px 0;
   padding: 14px 18px;
@@ -537,7 +542,7 @@ body.focus.reveal .bar, body.focus .bar:focus-within {
 body.focus .preview-pane, body.focus .drawer, body.focus .banner:not(.bad) { display: none; }
 body.focus main { grid-template-columns: 1fr; }
 /* Entered from Page mode too: the text comes back, alone. */
-body.focus main .editor-pane { display: block; }
+body.focus main .editor-pane { display: flex; }
 body.focus .editor-pane {
   mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent);
 }
@@ -556,20 +561,19 @@ body.focus .cm-scroller { padding-top: 45vh; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 0.6;
   transition: opacity 0.3s;
   pointer-events: none;
 }
-.quiet-status.bad { color: var(--error-text); font-weight: 700; font-size: 16px; opacity: 1; }
+.quiet-status.bad { color: var(--error-text); font-weight: 700; font-size: 16px; }
+.quiet-status.ok { color: var(--text); font-size: 16px; }
 /* Beside the statistics sidebar, not over its last rows. */
 body:has(#stats:not([hidden])) .quiet-status { right: calc(340px + 22px); max-width: calc(100vw - 340px - 44px); }
 .start-hint { display: none; }
 body.show-start-hint .start-hint {
   display: block;
   position: fixed;
-  top: 18px;
-  left: 50%;
-  translate: -50% 0;
+  bottom: 16px;
+  left: 22px;
   z-index: 21;
   padding: 9px 18px;
   border-radius: 999px;
@@ -582,7 +586,7 @@ body.show-start-hint .start-hint {
   animation: hint 9s ease both;
   pointer-events: none;
 }
-body:not(.bar-hidden) .start-hint { top: 62px; }
+body.no-book .start-hint, body.focus .start-hint { display: none !important; }
 body.focus-enter .focus-hint {
   display: block;
   position: fixed;
@@ -703,11 +707,22 @@ dialog.wide { width: min(1100px, calc(100vw - 32px)); }
 .drawer input[type="checkbox"] { width: 22px; height: 22px; }
 .style-pick { padding: 14px 16px; border-radius: 12px; background: var(--panel); }
 .style-pick .hint { margin: 8px 0 0; color: var(--text); }
+.style-changes p { margin: 10px 0 8px; }
+.style-changes button { border-color: var(--line); }
 #settings-msg { min-height: 1.4em; margin: 6px 0 14px; }
 #settings-msg.bad { color: var(--error-text); font-weight: 700; }
+/* A problem stays in sight while scrolling the drawer. */
+#settings-msg.bad { position: sticky; top: -20px; z-index: 1; background: var(--error-bg); padding: 8px 12px; border-radius: 8px; }
+.drawer input[aria-invalid="true"] { border: 2px solid var(--error-text); background: var(--error-bg); }
 .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 .checklist li { padding: 10px 14px; border-radius: 10px; background: var(--panel); white-space: pre-wrap; }
 .checklist li.warn { background: var(--error-bg); color: var(--error-text); font-weight: 700; }
+
+body:has(#settings:not([hidden])) .side-right { display: none; }
+@media (max-width: 1180px) {
+  body:has(#settings:not([hidden])) .side-left { display: none; }
+}
+main { min-width: 0; }
 
 @media (max-width: 800px) {
   .drawer { position: fixed; inset: 0 0 0 auto; z-index: 10; width: 100vw; }
@@ -777,10 +792,10 @@ dialog.palette::backdrop { background: rgb(0 0 0 / 0.55); backdrop-filter: none;
 .palette-list [aria-selected="true"] mark { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .palette-list .tick { color: var(--accent); font-size: 13px; }
 .palette-list [aria-selected="true"] .tick { color: inherit; }
-.palette-list .group { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.palette-list .group { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .palette-list [aria-selected="true"] .group { color: inherit; opacity: 0.8; }
 .palette-list .keys { display: inline-flex; gap: 3px; }
-.palette-list .keys kbd { font-size: 11px; padding: 2px 5px; line-height: 1.2; border-bottom-width: 2px; }
+.palette-list .keys kbd { font-size: 13px; padding: 2px 5px; line-height: 1.2; border-bottom-width: 2px; }
 .palette-list [aria-selected="true"] kbd { background: transparent; color: inherit; border-color: color-mix(in srgb, currentColor 45%, transparent); }
 .palette-list li.none { color: var(--muted); cursor: default; justify-content: center; height: 40px; }
 kbd {
@@ -849,6 +864,8 @@ body.script .cm-scroller { line-height: 1.6 !important; }
 .cm-f-center { text-align: center; }
 .cm-f-lyric { padding-left: 17% !important; font-style: italic; }
 .cm-f-section { color: var(--mark); font-weight: 700; }
+/* Notes and boneyard (hidden text) do not print. */
+.cm-f-hidden { color: var(--muted); font-style: italic; }
 .cm-f-synopsis, .cm-f-title, .cm-f-break { color: var(--muted); }
 .cm-f-break { text-align: center; }
 /* Stage plays: names centred, speech across the line, directions indented in italics. */
@@ -1006,3 +1023,27 @@ dialog.export { width: min(520px, calc(100vw - 32px)); }
 .export-list button b { font-size: 17px; }
 .export-list button span { color: var(--muted); font-size: 15px; }
 .export-list button:hover, .export-list button:focus-visible { background: var(--raised); }
+
+/* ---- find and replace (Ctrl+F), in the app's colours ---- */
+.cm-panels { background: var(--panel) !important; color: var(--text) !important; border-color: var(--line) !important; font-family: var(--sans); }
+.cm-panels.cm-panels-bottom { border-top: 1px solid var(--line) !important; }
+.cm-panel.cm-search { padding: 10px 44px 10px 16px !important; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 16px; }
+.cm-panel.cm-search br { display: none; }
+.cm-panel.cm-search input.cm-textfield {
+  font: inherit; font-size: 16px; color: var(--text); background: var(--raised);
+  border: 1px solid var(--muted); border-radius: 8px; padding: 6px 10px; margin: 0;
+}
+.cm-panel.cm-search input.cm-textfield:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+.cm-panel.cm-search button.cm-button {
+  font: inherit; font-size: 15px; color: var(--text); background: var(--raised); background-image: none !important;
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; margin: 0;
+}
+.cm-panel.cm-search button.cm-button:hover { background: var(--hover); }
+.cm-panel.cm-search label { font-size: 15px; color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+.cm-panel.cm-search input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+.cm-panel.cm-search button[name="close"] {
+  position: absolute; top: 8px; right: 10px; font-size: 26px !important; line-height: 1;
+  color: var(--text) !important; padding: 4px 8px; border-radius: 8px; background: transparent;
+}
+.cm-searchMatch { background: var(--accent-soft) !important; outline: 1px solid var(--accent); }
+.cm-searchMatch-selected { background: var(--sel) !important; }

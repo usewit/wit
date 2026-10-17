@@ -129,12 +129,16 @@ function remember(id: string) {
 }
 
 /** Fuzzy match: every query letter in order. Returns a score and the matched positions. */
-function fuzzy(text: string, q: string): { score: number; hits: number[] } | null {
-  const t = text.toLowerCase();
+/// Lower case without accents, so "cafe" finds "Café" (one letter stays one letter).
+const plain = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+function fuzzy(text: string, q: string, title = text): { score: number; hits: number[] } | null {
+  const t = plain(text);
+  q = plain(q);
   const hits: number[] = [];
   let score = 0;
   let from = 0;
-  for (const ch of q.toLowerCase()) {
+  for (const ch of q) {
     if (ch === " ") continue;
     const i = t.indexOf(ch, from);
     if (i < 0) return null;
@@ -145,7 +149,9 @@ function fuzzy(text: string, q: string): { score: number; hits: number[] } | nul
     hits.push(i);
     from = i + 1;
   }
-  if (t.includes(q.toLowerCase().trim())) score += 20;
+  if (t.includes(q.trim())) score += 20;
+  // The exact name wins: "Text width: Narrow" runs that, not "Narrower".
+  if (plain(title) === q.trim() || t === q.trim()) score += 1000;
   return { score, hits };
 }
 
@@ -178,7 +184,7 @@ function render() {
   let rows: { c: Command; hits: number[] }[];
   if (q.trim()) {
     rows = cmds
-      .map((c) => ({ c, m: fuzzy(`${c.category}: ${c.title}`, q) }))
+      .map((c) => ({ c, m: fuzzy(`${c.category}: ${c.title}`, q, c.title) }))
       .filter((r) => r.m)
       .sort((a, b) => b.m!.score - a.m!.score)
       .map((r) => ({ c: r.c, hits: r.m!.hits }));
@@ -282,6 +288,15 @@ export function closePalette() {
   if (d.open) d.close();
 }
 
+/// Commands whose key, pressed again, closes the dialog they opened.
+const OWN_DIALOG: Record<string, string> = {
+  palette: "palette",
+  help: "shortcuts-dialog",
+  export: "export-dialog",
+  settings: "prefs-dialog",
+  history: "history-dialog",
+};
+
 export function initCommands() {
   const input = $<HTMLInputElement>("palette-input");
   input.oninput = () => { active = 0; render(); };
@@ -302,8 +317,8 @@ export function initCommands() {
     const modal = document.querySelector("dialog[open]");
     for (const c of allCommands()) {
       if (!c.keys?.some((k) => matches(parse(k), e))) continue;
-      // An open dialog keeps its keys, except that the palette's key closes the palette.
-      if (modal && !(c.id === "palette" && modal.id === "palette")) return;
+      // An open dialog keeps its keys, except that a dialog's own key closes it.
+      if (modal && OWN_DIALOG[c.id] !== modal.id) return;
       if (c.editor && inOtherField(e.target)) return;
       e.preventDefault();
       e.stopPropagation();

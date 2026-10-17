@@ -6,24 +6,121 @@
 //!   `![alt](images/x.png)`          spot illustration, 70% width
 //!   `![alt](images/x.png "50%")`    spot illustration at that width
 //!   `![alt](images/x.png "full")`   full-bleed illustration page
-//! plus `<!-- pagebreak -->` on its own line.
+//! plus `<!-- pagebreak -->` on its own line and `<br>` line breaks. Other
+//! comments don't print. Any other HTML prints as the text it is, so `a <b> c`
+//! keeps its `<b>`. A link with no address yet (`[text]()`) prints as its text.
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// Escape text so Typst treats it literally. Quotes are left alone so smart
 /// quotes still work, and `--` inside text still becomes a dash.
 pub fn escape(text: &str, at_line_start: bool) -> String {
+    escape_with(text, at_line_start, |_| false)
+}
+
+/// `escape`, but hyphens in URLs (`https://…`, `www.…`) stay hyphens, so
+/// `a--b` in an address isn't made a dash. `link`: all of it is a link's text.
+fn escape_prose(text: &str, at_line_start: bool, link: bool) -> String {
+    let mut urls = vec![];
+    let mut start = None;
+    for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
+        match (c.is_whitespace(), start) {
+            (false, None) => start = Some(i),
+            (true, Some(s)) => {
+                let word = text[s..i].to_ascii_lowercase();
+                if word.contains("://") || word.starts_with("www.") {
+                    urls.push(s..i);
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    escape_with(text, at_line_start, |i| link || urls.iter().any(|r| r.contains(&i)))
+}
+
+/// `literal_hyphen(byte offset)`: escape the `-` there too.
+fn escape_with(text: &str, at_line_start: bool, literal_hyphen: impl Fn(usize) -> bool) -> String {
     let mut out = String::with_capacity(text.len() + 8);
-    for (i, c) in text.chars().enumerate() {
+    for (i, c) in text.char_indices() {
         let first = at_line_start && i == 0;
         let special = matches!(
             c,
             '\\' | '#' | '*' | '_' | '`' | '$' | '<' | '>' | '@' | '[' | ']' | '~' | '/' | '='
-        ) || (first && (matches!(c, '-' | '+') || c.is_ascii_digit()));
+        ) || (first && (matches!(c, '-' | '+') || c.is_ascii_digit()))
+            || (c == '-' && literal_hyphen(i));
         if special {
             out.push('\\');
         }
         out.push(c);
+    }
+    out
+}
+
+/// What a piece of HTML in the Markdown does. Wit understands `<u>…</u>`,
+/// `<br>` and comments; everything else is text.
+#[derive(Debug, PartialEq)]
+pub enum Html<'a> {
+    Underline,
+    EndUnderline,
+    Break,
+    PageBreak,
+    /// A comment: a note to self that doesn't print.
+    Hidden,
+    Text(&'a str),
+}
+
+/// One inline tag or comment.
+pub fn inline_html(h: &str) -> Html<'_> {
+    let tag = h.trim().to_ascii_lowercase();
+    match tag.as_str() {
+        "<u>" => Html::Underline,
+        "</u>" => Html::EndUnderline,
+        _ if is_br(&tag) => Html::Break,
+        _ if tag.starts_with("<!--") => comment(&tag),
+        _ => Html::Text(h),
+    }
+}
+
+/// `<br>`, `<br/>`, `<br />` and the like (already lowercase).
+pub fn is_br(tag: &str) -> bool {
+    tag.strip_prefix("<br").map(str::trim_start).is_some_and(|r| r == ">" || r == "/>")
+}
+
+fn comment(c: &str) -> Html<'static> {
+    let inner = c.trim().trim_start_matches("<!--").trim_end_matches("-->");
+    if inner.trim().eq_ignore_ascii_case("pagebreak") { Html::PageBreak } else { Html::Hidden }
+}
+
+/// An HTML block (the whole text between blank lines), in pieces: its
+/// comments, and the text around them, trimmed. Empty text is left out.
+pub fn html_block(text: &str) -> Vec<Html<'_>> {
+    let mut out = vec![];
+    let mut rest = text;
+    loop {
+        let (before, after) = match rest.find("<!--") {
+            Some(i) => (&rest[..i], Some(&rest[i..])),
+            None => (rest, None),
+        };
+        let before = before.trim();
+        if !before.is_empty() {
+            out.push(match inline_html(before) {
+                Html::Hidden | Html::PageBreak => Html::Text(before),
+                h => h,
+            });
+        }
+        let Some(after) = after else { break };
+        match after.find("-->") {
+            Some(end) => {
+                out.push(comment(&after[..end + 3]));
+                rest = &after[end + 3..];
+            }
+            // Unclosed: the rest of the block is the comment.
+            None => {
+                out.push(comment(after));
+                break;
+            }
+        }
     }
     out
 }
@@ -83,6 +180,11 @@ pub fn convert(md: &str) -> Converted {
     let mut in_image: Option<(String, String)> = None;
     let mut line_start = true;
     let mut list_depth = 0usize;
+    // Inside an HTML block: its text so far.
+    let mut html: Option<String> = None;
+    // The open link has no address, so it prints as plain text.
+    let mut bare_link = false;
+    let mut in_link = false;
 
     let push = |out: &mut String, s: &str, line_start: &mut bool| {
         out.push_str(s);
@@ -99,7 +201,37 @@ pub fn convert(md: &str) -> Converted {
             }
             continue;
         }
+        if let Some(text) = &mut html {
+            match ev {
+                Event::Html(h) => text.push_str(&h),
+                Event::End(TagEnd::HtmlBlock) => {
+                    for part in html_block(text) {
+                        match part {
+                            Html::PageBreak => push(&mut out, "#pagebreak()\n\n", &mut line_start),
+                            Html::Break => push(&mut out, "#linebreak()\n\n", &mut line_start),
+                            Html::Text(t) => {
+                                let t = t.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+                                if let Some(l) = pending_line.take() {
+                                    push(&mut out, &format!("#metadata({l})<q>"), &mut line_start);
+                                }
+                                push(&mut out, &escape(&t, true), &mut line_start);
+                                push(&mut out, "\n\n", &mut line_start);
+                            }
+                            _ => {}
+                        }
+                    }
+                    html = None;
+                    pending_line = None;
+                }
+                _ => {}
+            }
+            continue;
+        }
         match ev {
+            Event::Start(Tag::HtmlBlock) => {
+                html = Some(String::new());
+                pending_line = Some(line_of(range.start));
+            }
             Event::Start(Tag::Heading { level, .. }) => {
                 let f = if level == HeadingLevel::H1 { "#chapter[" } else { "#section[" };
                 push(&mut out, f, &mut line_start);
@@ -143,11 +275,18 @@ pub fn convert(md: &str) -> Converted {
                 line_start = true;
             }
             Event::End(TagEnd::Item) => push(&mut out, "],\n", &mut line_start),
+            // Typst refuses an empty address; Ctrl+K leaves one to fill in.
+            Event::Start(Tag::Link { dest_url, .. }) if dest_url.trim().is_empty() => (bare_link, in_link) = (true, true),
+            Event::End(TagEnd::Link) if bare_link => (bare_link, in_link) = (false, false),
             Event::Start(Tag::Link { dest_url, .. }) => {
+                in_link = true;
                 let url = dest_url.replace('\\', "\\\\").replace('"', "\\\"");
                 push(&mut out, &format!("#link(\"{url}\")["), &mut line_start);
             }
-            Event::End(TagEnd::Link) => push(&mut out, "]", &mut line_start),
+            Event::End(TagEnd::Link) => {
+                in_link = false;
+                push(&mut out, "]", &mut line_start)
+            }
             Event::Start(Tag::Image { dest_url, title, .. }) => {
                 in_image = Some((dest_url.to_string(), title.to_string()));
             }
@@ -155,22 +294,26 @@ pub fn convert(md: &str) -> Converted {
                 if let Some(l) = pending_line.take() {
                     push(&mut out, &format!("#metadata({l})<q>"), &mut line_start);
                 }
-                let s = escape(&t, line_start);
+                let s = escape_prose(&t, line_start, in_link);
                 push(&mut out, &s, &mut line_start);
             }
             Event::SoftBreak => push(&mut out, " ", &mut line_start),
             Event::HardBreak => push(&mut out, " \\\n", &mut line_start),
             Event::Rule => push(&mut out, "#scenebreak()\n\n", &mut line_start),
-            Event::Html(h) | Event::InlineHtml(h) => {
-                let tag = h.trim().to_ascii_lowercase();
-                if tag == "<!-- pagebreak -->" {
-                    push(&mut out, "#pagebreak()\n\n", &mut line_start);
-                } else if tag == "<u>" {
-                    push(&mut out, "#underline[", &mut line_start);
-                } else if tag == "</u>" {
-                    push(&mut out, "]", &mut line_start);
+            Event::Html(h) | Event::InlineHtml(h) => match inline_html(&h) {
+                Html::PageBreak => push(&mut out, "#pagebreak()\n\n", &mut line_start),
+                Html::Underline => push(&mut out, "#underline[", &mut line_start),
+                Html::EndUnderline => push(&mut out, "]", &mut line_start),
+                Html::Break => push(&mut out, " \\\n", &mut line_start),
+                Html::Hidden => {}
+                Html::Text(t) => {
+                    if let Some(l) = pending_line.take() {
+                        push(&mut out, &format!("#metadata({l})<q>"), &mut line_start);
+                    }
+                    let s = escape_prose(&t.replace('\n', " "), line_start, in_link);
+                    push(&mut out, &s, &mut line_start);
                 }
-            }
+            },
             _ => {}
         }
     }
@@ -210,6 +353,34 @@ mod tests {
         assert!(t.contains("a #underline[marked] word"));
         let t = to_typst("see [the site](https://ex.com/a?b=\"c\")\n");
         assert!(t.contains("#link(\"https://ex.com/a?b=\\\"c\\\"\")[the site]"), "{t}");
+    }
+
+    #[test]
+    fn empty_links_print_their_text() {
+        assert!(to_typst("see [the site]() now\n").contains("see the site now"));
+        assert!(to_typst("see [the site](<>) now\n").contains("see the site now"));
+        assert!(!to_typst("[x]()\n").contains("#link"));
+    }
+
+    #[test]
+    fn unknown_html_is_text() {
+        let t = to_typst("# A <tag> here\n\na <b> c and <br> d<!-- note -->\n");
+        assert!(t.contains("#chapter[#metadata(1)<q>A \\<tag\\> here]"), "{t}");
+        assert!(t.contains("a \\<b\\> c and  \\\n d\n"), "{t}");
+        assert_eq!(inline_html("<BR  />"), Html::Break);
+        let t = to_typst("<div>\nHello\n</div>\n\n<!-- pagebreak -->\n\n<!-- a\nnote -->\n\n<tag>\n");
+        assert!(t.contains("#metadata(1)<q>\\<div\\> Hello \\<\\/div\\>\n\n#pagebreak()"), "{t}");
+        assert!(!t.contains("note"), "{t}");
+        assert!(t.contains("#metadata(10)<q>\\<tag\\>"), "{t}");
+        assert_eq!(html_block("x <!-- pagebreak --> <!-- y"), vec![Html::Text("x"), Html::PageBreak, Html::Hidden]);
+    }
+
+    #[test]
+    fn hyphens_in_urls_stay_hyphens() {
+        let t = to_typst("go to https://ex.com/a--b or www.a--b.ro -- or [x--y](https://e.com) <https://e.com/c--d>\n");
+        assert!(t.contains("https:\\/\\/ex.com\\/a\\-\\-b or www.a\\-\\-b.ro -- or"), "{t}");
+        assert!(t.contains("[x\\-\\-y]"), "{t}");
+        assert!(t.contains("#link(\"https://e.com/c--d\")[https:\\/\\/e.com\\/c\\-\\-d]"), "{t}");
     }
 
     #[test]

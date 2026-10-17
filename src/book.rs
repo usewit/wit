@@ -40,6 +40,9 @@ pub struct Settings {
     pub document_type: String,
     /// Preset name matching the trim size, or "custom" (for the settings panel).
     pub trim_preset: String,
+    /// The Page setup template (style preset) this document started from, or
+    /// "" for none. Settings may differ from it: those are this book's changes.
+    pub style_preset: String,
     pub title: String,
     pub author: String,
     pub lang: String,
@@ -107,6 +110,26 @@ pub fn is_script(document_type: &str) -> bool {
     matches!(document_type, "screenplay" | "play")
 }
 
+/// What a document is when book.yaml doesn't say: told by its file. A starter
+/// name gives its kind; any other `.fountain` file is a stage play when it has
+/// `#` sections (acts and scenes) and no `INT.`/`EXT.` scene headings, else a
+/// screenplay; anything else is a book.
+pub fn kind_from_source(name: &str, text: &str) -> &'static str {
+    if let Some((kind, _)) = DOCUMENT_TYPES.iter().find(|(_, n)| *n == name) {
+        return kind;
+    }
+    if !name.to_ascii_lowercase().ends_with(".fountain") {
+        return "book";
+    }
+    let lines = || text.lines().map(str::trim);
+    let sections = lines().any(|l| l.starts_with('#'));
+    let scenes = lines().any(|l| {
+        let l = l.to_ascii_lowercase();
+        ["int.", "int ", "ext.", "ext ", "est.", "est ", "int./ext", "int/ext", "i/e"].iter().any(|p| l.starts_with(p))
+    });
+    if sections && !scenes { "play" } else { "screenplay" }
+}
+
 /// The open font each kind of document starts with.
 pub fn default_font(document_type: &str) -> &'static str {
     match document_type {
@@ -123,12 +146,14 @@ fn parse_wxh(s: &str) -> Option<(f64, f64)> {
 }
 
 impl Settings {
-    pub fn from_yaml(y: &serde_yaml::Value) -> Result<Self> {
+    /// `kind` is the document type to use when book.yaml has none (see
+    /// [`kind_from_source`]).
+    pub fn from_yaml(y: &serde_yaml::Value, kind: &str) -> Result<Self> {
         let s = |k: &str, d: &str| y.get(k).and_then(|v| v.as_str()).unwrap_or(d).to_string();
         let f = |k: &str, d: f64| y.get(k).and_then(|v| v.as_f64()).unwrap_or(d);
         let b = |k: &str, d: bool| y.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
 
-        let kind = s("document_type", "book");
+        let kind = s("document_type", kind);
         if !DOCUMENT_TYPES.iter().any(|(k, _)| *k == kind) {
             return Err(anyhow!("document_type must be book, essay, screenplay or play"));
         }
@@ -145,9 +170,10 @@ impl Settings {
         Ok(Settings {
             document_type: kind.clone(),
             trim_preset: settings::preset_for(trim_w_mm, trim_h_mm).to_string(),
+            style_preset: s("style_preset", ""),
             title: s("book_title", "Untitled"),
             author: s("author", ""),
-            lang: s("lang", "ro"),
+            lang: s("lang", "en"),
             trim_w_mm,
             trim_h_mm,
             bleed_mm: f("bleed_mm", 3.0),
@@ -240,7 +266,12 @@ impl Book {
             Ok(t) => serde_yaml::from_str(&t).with_context(|| format!("parsing {}", path.display()))?,
             Err(_) => serde_yaml::Value::Null,
         };
-        Settings::from_yaml(&y)
+        Settings::from_yaml(&y, &self.inferred_kind())
+    }
+
+    /// The document type the source file suggests, for a book.yaml without one.
+    fn inferred_kind(&self) -> String {
+        kind_from_source(&self.entry.source, &self.read_source().unwrap_or_default()).to_string()
     }
 
     /// Apply settings-panel changes to book.yaml, editing it in place.
@@ -250,7 +281,7 @@ impl Book {
         let updated = settings::apply_yaml_updates(&text, &settings::updates_from_json(changes)?);
         // Validate before touching the file.
         let parsed: serde_yaml::Value = serde_yaml::from_str(&updated)?;
-        let new = Settings::from_yaml(&parsed)?;
+        let new = Settings::from_yaml(&parsed, &self.inferred_kind())?;
         let tmp = path.with_extension("yaml.wit-tmp");
         std::fs::write(&tmp, updated)?;
         std::fs::rename(&tmp, &path)?;
@@ -449,4 +480,29 @@ fn hash_bytes(b: &[u8]) -> String {
 pub enum SaveError {
     Conflict(String),
     Io(anyhow::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_from_the_file() {
+        assert_eq!(kind_from_source("story.md", ""), "book");
+        assert_eq!(kind_from_source("essay.md", ""), "essay");
+        assert_eq!(kind_from_source("notes.md", "# A\n"), "book");
+        assert_eq!(kind_from_source("play.fountain", "EXT. X - DAY\n"), "play");
+        assert_eq!(kind_from_source("x.fountain", "# ACT ONE\n\n## Scene 1\n\nMARIA\nHi.\n"), "play");
+        assert_eq!(kind_from_source("x.FOUNTAIN", "# ACT ONE\n\nINT. HOUSE - DAY\n"), "screenplay");
+        assert_eq!(kind_from_source("x.fountain", "Title: X\n\nNORI\nHi.\n"), "screenplay");
+    }
+
+    #[test]
+    fn settings_default_to_english_and_the_inferred_kind() {
+        let s = Settings::from_yaml(&serde_yaml::Value::Null, "screenplay").unwrap();
+        assert_eq!((s.lang.as_str(), s.document_type.as_str()), ("en", "screenplay"));
+        let y: serde_yaml::Value = serde_yaml::from_str("document_type: book\nlang: ro\n").unwrap();
+        let s = Settings::from_yaml(&y, "screenplay").unwrap();
+        assert_eq!((s.lang.as_str(), s.document_type.as_str()), ("ro", "book"));
+    }
 }

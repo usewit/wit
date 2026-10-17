@@ -10,6 +10,7 @@ use anyhow::Result;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::io::Write;
 use std::path::Path;
+use crate::md::{Html, html_block, inline_html};
 use zip::write::SimpleFileOptions;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -78,6 +79,8 @@ fn blocks(md: &str) -> Vec<Block> {
     let mut lists: Vec<Option<u64>> = vec![];
     let mut item: Option<String> = None;
     let mut in_image = false;
+    // Inside an HTML block: its text so far.
+    let mut html: Option<String> = None;
 
     let flush = |out: &mut Vec<Block>, runs: &mut Vec<Run>, heading: Option<u8>, quote: usize, item: &mut Option<String>, depth: usize| {
         if runs.is_empty() && item.is_none() {
@@ -102,7 +105,29 @@ fn blocks(md: &str) -> Vec<Block> {
             }
             continue;
         }
+        if let Some(text) = &mut html {
+            match ev {
+                Event::Html(h) => text.push_str(&h),
+                Event::End(TagEnd::HtmlBlock) => {
+                    for part in html_block(text) {
+                        match part {
+                            Html::PageBreak => out.push(Block::PageBreak),
+                            Html::Text(t) => {
+                                let t = t.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+                                runs.push(Run::Text(t, style.clone(), None));
+                                flush(&mut out, &mut runs, heading, quote, &mut item, lists.len());
+                            }
+                            _ => {}
+                        }
+                    }
+                    html = None;
+                }
+                _ => {}
+            }
+            continue;
+        }
         match ev {
+            Event::Start(Tag::HtmlBlock) => html = Some(String::new()),
             Event::Start(Tag::Heading { level, .. }) => heading = Some(if level == HeadingLevel::H1 { 1 } else { 2 }),
             Event::End(TagEnd::Heading(_)) => {
                 flush(&mut out, &mut runs, heading, quote, &mut item, lists.len());
@@ -136,7 +161,10 @@ fn blocks(md: &str) -> Vec<Block> {
             Event::End(TagEnd::Emphasis) => style.italic = false,
             Event::Start(Tag::Strikethrough) => style.strike = true,
             Event::End(TagEnd::Strikethrough) => style.strike = false,
-            Event::Start(Tag::Link { dest_url, .. }) => link = Some(dest_url.to_string()),
+            // No address yet (`[text]()`): plain text.
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                link = Some(dest_url.to_string()).filter(|u| !u.trim().is_empty())
+            }
             Event::End(TagEnd::Link) => link = None,
             Event::Start(Tag::Image { dest_url, title, .. }) => {
                 flush(&mut out, &mut runs, heading, quote, &mut item, lists.len());
@@ -153,11 +181,13 @@ fn blocks(md: &str) -> Vec<Block> {
             Event::SoftBreak => runs.push(Run::Text(" ".into(), style.clone(), link.clone())),
             Event::HardBreak => runs.push(Run::Break),
             Event::Rule => out.push(Block::SceneBreak),
-            Event::Html(h) | Event::InlineHtml(h) => match h.trim().to_ascii_lowercase().as_str() {
-                "<!-- pagebreak -->" => out.push(Block::PageBreak),
-                "<u>" => style.underline = true,
-                "</u>" => style.underline = false,
-                _ => {}
+            Event::Html(h) | Event::InlineHtml(h) => match inline_html(&h) {
+                Html::PageBreak => out.push(Block::PageBreak),
+                Html::Underline => style.underline = true,
+                Html::EndUnderline => style.underline = false,
+                Html::Break => runs.push(Run::Break),
+                Html::Hidden => {}
+                Html::Text(t) => runs.push(Run::Text(t.replace('\n', " "), style.clone(), link.clone())),
             },
             _ => {}
         }
@@ -620,6 +650,16 @@ mod tests {
         assert!(matches!(b[2], Block::SceneBreak));
         assert!(matches!(&b[3], Block::Item { label, .. } if label == "•"));
         assert!(matches!(b[5], Block::Image { width_pct, .. } if width_pct == 50.0));
+    }
+
+    #[test]
+    fn empty_links_and_unknown_html() {
+        let b = blocks("a [x]() <b> c<br>d <!-- note -->\n\n<tag>\n\n<!-- pagebreak -->\n");
+        let Block::Para(runs) = &b[0] else { panic!() };
+        let text: String = runs.iter().map(|r| match r { Run::Text(t, _, l) => { assert!(l.is_none()); t.as_str() } Run::Break => "|" }).collect();
+        assert_eq!(text, "a x <b> c|d ");
+        assert!(matches!(&b[1], Block::Para(r) if matches!(&r[0], Run::Text(t, ..) if t == "<tag>")));
+        assert!(matches!(b[2], Block::PageBreak));
     }
 
     #[test]

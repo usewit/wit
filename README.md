@@ -193,6 +193,10 @@ outside margins and the 0.125 in bleed.
 - **Auto-save** 0.8 s after you stop typing. If `story.md` changes on disk
   outside Wit, saving pauses and asks which version to keep. Unsaved text
   is also kept as a draft in the browser.
+- **Language**: English unless you choose another (in New, or Page setup).
+  It sets hyphenation, the editor's spell check and the language recorded in
+  the PDF and Word files. `book.yaml` keeps it as `lang: en` (or `ro`, `de`,
+  `es`, `fr`, `it`, `nl`, `pt`).
 - **Page setup** edits `book.yaml` in place. It keeps comments and unknown
   keys, so `make_book.py` still works. It includes style presets (bedtime A5,
   booklets, early reader, picture book, novels) and a print checklist (page
@@ -219,8 +223,8 @@ outside margins and the 0.125 in bleed.
   pages, the chapter you're in with everything changed since the latest named
   revision marked.
 - **Export** (Alt+E): Print PDF, Proof PDF, or a Word (.docx) or OpenDocument
-  (.odt) manuscript for an editor. The desktop app saves through a native
-  dialog instead of opening a browser.
+  (.odt) manuscript for an editor. Scripts export as PDFs only, for now. The
+  desktop app saves through a native dialog instead of opening a browser.
 - **Focus mode** (Alt+4, Esc leaves): hides the toolbar and pages, dims
   every paragraph except the current one, and keeps the cursor line centred.
 - **Sync**: click a page to jump to its text. Moving the cursor highlights its page.

@@ -64,6 +64,8 @@ interface Deps {
   changed(): void;
   /** Preview pages changed look (dark or print colours): draw them again. */
   pagesChanged(): void;
+  /** A short note above the text. */
+  note(text: string): void;
 }
 
 export function initPrefs(d: Deps) {
@@ -232,10 +234,13 @@ export function initPrefs(d: Deps) {
   dialog.addEventListener("close", () => d.view.focus());
 
   function openSettings() {
+    if (dialog.open) { dialog.close(); return; }
     sync();
     dialog.showModal();
-    dialog.querySelector<HTMLInputElement>(`input[name="editor-font"]:checked`)?.focus();
+    // Start at the top (the theme), so Tab goes down the dialog in order.
+    (dialog.querySelector<HTMLElement>(".theme-pick [aria-pressed=true]") ?? $("prefs-close")).focus();
   }
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
 
   /** Bring every control showing a preference up to date. */
   function sync() {
@@ -270,7 +275,11 @@ export function initPrefs(d: Deps) {
     { id: "toolbar", category: "View", title: "Toggle toolbar", keys: ["Alt+5"], run: () => setBar(!barOn()), checked: barOn },
     { id: "dock", category: "View", title: "Toggle formatting dock", keys: ["Mod+Space", "Alt+6"], macKeys: ["Mod+Alt+F", "Alt+6"], run: () => setDock(!dockOn()), checked: dockOn },
     { id: "dark-pages", category: "View", title: "Dark page previews in dark themes", run: () => setDarkPages(!darkPagesOn()), checked: darkPagesOn },
-    { id: "light", category: "Editor", title: "Lighter text", keys: ["Alt+9"], run: () => setLight(!lightOn()), checked: lightOn },
+    { id: "light", category: "Editor", title: "Lighter text", keys: ["Alt+9"], run: () => {
+      setLight(!lightOn());
+      // Otherwise the key seems to do nothing.
+      if (lightOn() && !font().light) d.note(`${font().name} has no light weight. Choose another editor font in Settings to see lighter text.`);
+    }, checked: lightOn },
     { id: "spell", category: "Editor", title: "Toggle spell check", keys: ["Alt+8"], run: () => setSpell(!spellOn()), checked: spellOn },
     { id: "size-up", category: "Text size", title: "Larger", keys: ["Alt+="], run: () => step(1) },
     { id: "size-down", category: "Text size", title: "Smaller", keys: ["Alt+-"], run: () => step(-1) },

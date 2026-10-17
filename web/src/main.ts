@@ -1,8 +1,8 @@
 import "./style.css";
 import "./fonts.css";
 import { EditorView, drawSelection, keymap, Decoration, MatchDecorator, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
-import { Compartment, EditorState } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, indentWithTab, redo } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { markdown } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
@@ -34,7 +34,7 @@ export interface Preview {
 }
 type DocKind = "book" | "essay" | ScriptKind;
 interface BookData {
-  settings: { document_type: DocKind } | null;
+  settings: { document_type: DocKind; lang?: string } | null;
   id: string;
   source: string;
   hash: string;
@@ -73,7 +73,6 @@ const mdStyle = HighlightStyle.define([
   { tag: t.strikethrough, textDecoration: "line-through" },
   { tag: [t.processingInstruction, t.meta, t.contentSeparator], color: "var(--muted)" },
   { tag: [t.link, t.url], color: "var(--muted)" },
-  { tag: t.quote, color: "var(--muted)", fontStyle: "italic" },
   { tag: t.comment, color: "var(--muted)" },
 ]);
 
@@ -91,9 +90,33 @@ const dashPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
+// Quotes are styled by line, not by the Markdown parser: the editor shows one
+// paragraph per line, which Markdown would read as the quote running on.
+const quoteLine = Decoration.line({ class: "cm-quote" });
+const quotePlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) { this.decorations = this.build(view); }
+    update(u: ViewUpdate) { if (u.docChanged || u.viewportChanged) this.decorations = this.build(u.view); }
+    build(view: EditorView) {
+      const marks = [];
+      for (const { from, to } of view.visibleRanges) {
+        for (let pos = from; pos <= to;) {
+          const line = view.state.doc.lineAt(pos);
+          if (line.text.startsWith(">")) marks.push(quoteLine.range(line.from));
+          pos = line.to + 1;
+        }
+      }
+      return Decoration.set(marks);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
 const editorTheme = EditorView.theme({
   "&": { backgroundColor: "transparent", color: "var(--text)" },
   ".cm-dash": { color: "var(--mark)", fontWeight: "700" },
+  ".cm-quote": { color: "var(--muted)", fontStyle: "italic" },
 });
 
 function insertDash(view: EditorView): boolean {
@@ -117,6 +140,12 @@ const doubleHyphen = EditorView.inputHandler.of((view, from, to, text) => {
     return true;
   }
   if (view.state.sliceDoc(from - 1, from) !== "-") return false;
+  // Leave hyphens alone in an HTML comment (<!-- pagebreak -->) and in links.
+  const head = view.state.sliceDoc(line.from, from - 1);
+  const comment = head.lastIndexOf("<!");
+  if (comment >= 0 && head.indexOf("-->", comment) < 0) return false;
+  const word = head.slice(head.search(/\S*$/));
+  if (/:\/\/|^www\.|\]\(|^<?https?:|@/.test(word)) return false;
   const atStart = from - 1 === line.from;
   const before = view.state.sliceDoc(from - 2, from - 1);
   // Keep the spacing the writer typed: "word -- word" and "word--word" both
@@ -127,11 +156,23 @@ const doubleHyphen = EditorView.inputHandler.of((view, from, to, text) => {
 });
 
 const langCompartment = new Compartment();
+const historyCompartment = new Compartment();
+const attrsCompartment = new Compartment();
+const KIND_NAMES: Record<string, string> = { book: "Book", essay: "Essay", screenplay: "Screenplay", play: "Play" };
+/// The editor's language (for spell check and screen readers) and label.
+const editorAttrs = (lang: string) =>
+  EditorView.contentAttributes.of({ lang, "aria-label": `${KIND_NAMES[kind] ?? "Document"} text` });
+let lang = "en";
+function setLang(l: string) {
+  lang = l || "en";
+  view.dispatch({ effects: attrsCompartment.reconfigure(editorAttrs(lang)) });
+}
 const proseExtensions = [
   // No Markdown Enter handling: Enter simply starts a new paragraph (or list item).
   markdown({ addKeymap: false }),
   syntaxHighlighting(mdStyle),
   dashPlugin,
+  quotePlugin,
   underlinePlugin,
   doubleHyphen,
   keymap.of([{ key: "Enter", run: continueList }]),
@@ -149,6 +190,7 @@ function setKind(k: DocKind) {
   document.body.dataset.kind = k;
   document.body.classList.toggle("script", isScript());
   view.dispatch({ effects: langCompartment.reconfigure(isScript() ? fountainPlugin(k as ScriptKind) : proseExtensions) });
+  labelButtons();
 }
 
 const view = new EditorView({
@@ -156,34 +198,54 @@ const view = new EditorView({
   state: EditorState.create({
     doc: "",
     extensions: [
-      history(),
+      historyCompartment.of(history()),
       // Draw our own thick cursor instead of the browser's 1px caret.
       drawSelection({ cursorBlinkRate: 1000 }),
       EditorView.lineWrapping,
+      // Keep the line being written clear of the formatting dock.
+      EditorView.scrollMargins.of(() => ({ bottom: document.body.classList.contains("dock-hidden") ? 24 : 96 })),
       // Markdown for books and essays, Fountain for scripts (see setKind).
       langCompartment.of(proseExtensions),
       highlightSelectionMatches(),
       editorTheme,
       focusCompartment.of([]),
-      EditorView.contentAttributes.of({ lang: "ro", "aria-label": "Book text" }),
+      attrsCompartment.of(editorAttrs("en")),
       spellCompartment.of(spellExtension(spellOn())),
       // Shortcuts like Ctrl+B live in the command list (main.ts, commands.ts).
       keymap.of([
         ...defaultKeymap,
+        // Ctrl+Shift+Z redoes on Windows too, not only Ctrl+Y.
+        { key: "Mod-Shift-z", run: redo, preventDefault: true },
         ...historyKeymap,
         ...searchKeymap,
         indentWithTab,
       ]),
       EditorView.updateListener.of((u) => {
-        if (u.docChanged) { onEdit(); sidebars?.docChanged(); changes?.docChanged(); }
+        if (u.docChanged) {
+          // Loading a document (setDoc) isn't an edit: nothing to save or keep.
+          if (!u.transactions.some((tr) => tr.annotation(Transaction.addToHistory) === false)) onEdit();
+          sidebars?.docChanged();
+          changes?.docChanged();
+        }
         if (u.selectionSet && !u.docChanged) { syncPreviewToCursor(); sidebars?.cursorMoved(); changes?.cursorMoved(); }
       }),
     ],
   }),
 });
 
-function setDoc(text: string) {
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+/// Show a document's text. Loading isn't an edit: it can't be undone, and the
+/// undo history of whatever was shown before is dropped, so Ctrl+Z can never
+/// put another book's text (or nothing) into this one. `undoable` is for
+/// restoring a draft, which the writer may want to take back.
+function setDoc(text: string, undoable = false) {
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+    annotations: Transaction.addToHistory.of(undoable),
+  });
+  if (!undoable) {
+    view.dispatch({ effects: historyCompartment.reconfigure([]) });
+    view.dispatch({ effects: historyCompartment.reconfigure(history()) });
+  }
 }
 
 // ---------------------------------------------------------------- status
@@ -234,17 +296,40 @@ function showBanner(html: string | null, bad = false) {
 
 // ---------------------------------------------------------------- saving
 
-function onEdit() {
-  if (conflict) return;
+/// Keep the text as a browser draft, with the file version it was written
+/// against, so restoring it later can't silently overwrite a newer file.
+function keepDraft() {
   store.set(`draft.${bookId}`, toFile(view.state.doc.toString()).text);
+  store.set(`draftBase.${bookId}`, baseHash);
+}
+
+function dropDraft(id = bookId) {
+  store.del(`draft.${id}`);
+  store.del(`draftBase.${id}`);
+}
+
+function onEdit() {
+  // During a save conflict the text is still kept, as the banner promises.
+  keepDraft();
+  if (conflict) return;
   setStatus("Edited");
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(save, SAVE_DELAY_MS);
 }
 
-function saveNow() {
+let savedTimer: number | undefined;
+
+/// Alt+S: save, and say so where it can be seen.
+async function saveNow() {
   clearTimeout(saveTimer);
-  save();
+  await save();
+  if (statusBad || !bookId) return;
+  const quiet = $("quiet-status");
+  clearTimeout(savedTimer);
+  clearTimeout(wordTimer);
+  quiet.textContent = "Saved";
+  quiet.classList.add("ok");
+  savedTimer = window.setTimeout(() => { quiet.classList.remove("ok"); updateFocusStatus(); }, 2000);
 }
 
 async function save() {
@@ -289,7 +374,7 @@ async function save() {
     setRevision(data.revision);
     lastSaved = editorText;
     diskLines = disk.diskLines;
-    store.del(`draft.${bookId}`);
+    dropDraft();
     renderPreview(data.preview);
     setStatus(view.state.doc.toString() === editorText ? "Saved" : "Edited");
   } catch (e) {
@@ -349,7 +434,7 @@ function renderPreview(p: Preview) {
   if (!$("settings").hidden) renderChecklist(n);
   sidebars.pagesChanged();
   const note = n % 4 === 0 || isScript() ? "" : ` · ${4 - (n % 4)} more for a multiple of 4`;
-  $("page-count").textContent = `${n} pages${note} · ${p.ms} ms`;
+  $("page-count").textContent = `${n} ${n === 1 ? "page" : "pages"}${note} · ${p.ms} ms`;
 }
 
 // ---------------------------------------------------------------- editor ⇄ pages
@@ -433,28 +518,37 @@ async function loadBook(id: string, discardDraft = false) {
   setRevision(data.revision);
   images = data.images;
   setKind(data.settings?.document_type ?? "book");
+  setLang(data.settings?.lang ?? "en");
   const ed = fromFile(data.source);
   lastSaved = ed.text;
   diskLines = ed.diskLines;
 
   // Drafts are stored in Markdown file form.
   const draft = discardDraft ? null : store.get(`draft.${id}`);
+  const draftBase = store.get(`draftBase.${id}`) ?? "";
   setDoc(ed.text);
-  if (discardDraft) store.del(`draft.${id}`);
+  if (discardDraft) dropDraft(id);
   if (draft && draft !== data.source) {
     showBanner(
       `<span>There is unsaved text from your last session.</span>
        <button id="restore-draft" class="primary">Restore it</button>
        <button id="drop-draft">Discard it</button>`,
     );
-    $("restore-draft").onclick = () => { showBanner(null); setDoc(fromFile(draft).text); };
-    $("drop-draft").onclick = () => { showBanner(null); store.del(`draft.${id}`); };
+    $("restore-draft").onclick = () => {
+      showBanner(null);
+      // Save against the version the draft was written on: if the file has
+      // changed since, the save stops and asks which version to keep.
+      baseHash = draftBase;
+      setDoc(fromFile(draft).text, true);
+      view.focus();
+    };
+    $("drop-draft").onclick = () => { showBanner(null); dropDraft(id); view.focus(); };
   }
   // Files with paragraphs on consecutive lines (no blank line between) print
   // as one long paragraph; save once so each line becomes its own paragraph.
   if (!draft && toFile(ed.text).text !== data.source) {
     lastSaved = "";
-    window.setTimeout(saveNow, 0);
+    window.setTimeout(() => save(), 0);
   }
   if (data.settings_error) showBanner(`<span>book.yaml problem: ${escapeHtml(data.settings_error)}</span>`, true);
 
@@ -513,6 +607,8 @@ async function init() {
     { id: "book-open", category: "Document", title: "Open a folder…", keys: ["Alt+O", "Mod+O"], run: bookUi.showOpen },
     { id: "book-new", category: "Document", title: "New book, essay, screenplay or play…", keys: ["Alt+N"], macKeys: ["Mod+Alt+N", "Alt+N"], run: bookUi.showCreate },
   ]);
+  // "New" is registered only now, so its tooltip is too.
+  labelButtons();
 
   await prefs.pagesReady;
   const books = await loadBookList();
@@ -528,6 +624,8 @@ function setLayout(l: string) {
     b.setAttribute("aria-pressed", String(b.dataset.layout === l)));
   store.set("layout", l);
   view.requestMeasure();
+  // Coming back from Page mode, the cursor goes back into the text.
+  if (l !== "pages" && bookId && !document.querySelector("dialog[open]")) view.focus();
 }
 setLayout(store.get("layout") ?? "split");
 const layout = () => $("main").className.replace("layout-", "");
@@ -588,6 +686,7 @@ const pageSetup = initSettings({
   pageCount: () => pageCount,
   kind: () => kind,
   onPreview: renderPreview,
+  langChanged: setLang,
   toggled(open) { if (!open) view.focus(); },
 });
 
@@ -604,6 +703,7 @@ function toggleFocus(on = !focusOn) {
   clearTimeout(hintTimer);
   document.body.classList.toggle("focus-enter", on);
   if (on) hintTimer = window.setTimeout(() => document.body.classList.remove("focus-enter"), 3000);
+  if (bookId && (on || layout() !== "pages")) view.focus();
 }
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && focusOn && !document.querySelector("dialog[open]")) toggleFocus(false);
@@ -627,7 +727,7 @@ const historyUi = initHistory({
     baseHash = data.hash;
     setRevision(data.revision);
     setDoc(ed.text);
-    store.del(`draft.${bookId}`);
+    dropDraft();
     renderPreview(data.preview as Preview);
     setStatus("Restored");
   },
@@ -656,6 +756,7 @@ var sidebars: ReturnType<typeof initSidebars> = initSidebars({
   goTo: goToLine,
   changed: () => view.requestMeasure(),
   enabled: () => !!bookId && !document.body.classList.contains("no-book"),
+  leaveFocus: () => { if (focusOn) toggleFocus(false); },
 });
 
 // ---------------------------------------------------------------- changes
@@ -686,6 +787,7 @@ const prefs = initPrefs({
   openPageSetup: () => pageSetup.toggle(),
   changed: () => view.requestMeasure(),
   pagesChanged: () => { if (bookId) refreshPreview(); },
+  note: (text) => note(`<span>${escapeHtml(text)}</span>`),
 });
 
 type FileKind = "print" | "proof" | "docx" | "odt";
@@ -741,6 +843,7 @@ function openExport() {
   d.querySelector<HTMLButtonElement>("[data-export]")?.focus();
 }
 $("export-close").onclick = () => $<HTMLDialogElement>("export-dialog").close();
+$("export-dialog").addEventListener("click", (e) => { if (e.target === e.currentTarget) $<HTMLDialogElement>("export-dialog").close(); });
 
 const hasBook = () => !!bookId && !document.body.classList.contains("no-book");
 // Writing commands need the editor on screen.
@@ -795,15 +898,23 @@ addCommandSource(() => bookList.filter((b) => b.id !== bookId).map((b): Command 
 initCommands();
 
 // Toolbar and dock buttons run commands; their tooltips show the shortcut.
+// Labelled again when the kind of document changes ("Scenes" for a script).
+function labelButtons() {
+  document.querySelectorAll<HTMLButtonElement>("[data-cmd]").forEach((b) => {
+    const id = b.dataset.cmd!;
+    if (id === "book-menu") {
+      b.title = `Open a book (${keyLabel("Alt+O")} for a folder)`;
+      return;
+    }
+    b.title = titleWithKey(id);
+    if (id === "outline") b.setAttribute("aria-label", b.title.replace(/ \(.*\)$/, ""));
+  });
+}
 document.querySelectorAll<HTMLButtonElement>("[data-cmd]").forEach((b) => {
   const id = b.dataset.cmd!;
-  if (id !== "book-menu") {
-    b.title = titleWithKey(id);
-    b.onclick = () => runCommand(id);
-  } else {
-    b.title = `Open a book (${keyLabel("Alt+O")} for a folder)`;
-  }
+  if (id !== "book-menu") b.onclick = () => runCommand(id);
 });
+labelButtons();
 // The dock mustn't take the cursor out of the text.
 $("dock").addEventListener("mousedown", (e) => e.preventDefault());
 

@@ -13,6 +13,9 @@ const EDITING: [string, string[]][] = [
   ["Find and replace", ["Mod+F"]],
   ["Select all", ["Mod+A"]],
   ["Dialogue dash (type two hyphens)", ["-", "-"]],
+  ["Script: next element", ["Enter"]],
+  ["Script: choose what an empty line is", ["Tab"]],
+  ["Script: a plain new line", ["Shift+Enter"]],
 ];
 
 function keys(specs: string[], joiner: string): HTMLElement {

@@ -70,9 +70,12 @@
   #if play {
     align(center, upper(body))
   } else if num != none and cfg.scene_numbers {
+    // The left number in the margin before the heading; the right one ends
+    // with the line, 7.5 in from the page edge (A4 too), the heading kept
+    // clear of it.
     place(dx: -0.75in, upper(num))
-    upper(body)
-    place(top + right, dx: 0.75in, upper(num))
+    place(top + right, upper(num))
+    pad(right: 0.5in, upper(body))
   } else {
     upper(body)
   }
@@ -80,9 +83,11 @@
 #let action(body) = block(above: gap, below: gap, width: 100%)[
   #if play { pad(left: 2in, emph(body)) } else { body }
 ]
-// A character's name stays with the first words they say.
-#let cue(body) = block(above: gap, below: 0pt, sticky: true, width: 100%)[
-  #if play { align(center, upper(body)) } else { pad(left: 2.2in, upper(body)) }
+// A character's name stays with the first words they say. A forced name
+// ("@McCLANE") prints as written.
+#let cue(body, forced: false) = block(above: gap, below: 0pt, sticky: true, width: 100%)[
+  #let name = if forced { body } else { upper(body) }
+  #if play { align(center, name) } else { pad(left: 2.2in, name) }
 ]
 #let paren(body) = block(above: 0pt, below: 0pt, sticky: true, width: 100%)[
   #if play { pad(left: 1in, right: 1in, emph(body)) } else { pad(left: 1.6in, block(width: 2in, body)) }

@@ -185,6 +185,8 @@ export function initHistory(d: Deps) {
   }
 
   const open = async (naming = false) => {
+    // Alt+H again closes it.
+    if (dialog.open && !naming) { dialog.close(); return; }
     await d.flush();
     list.innerHTML = "";
     nameInput.value = "";
@@ -238,6 +240,14 @@ export function initHistory(d: Deps) {
   }));
 
   $("history-close").onclick = () => dialog.close();
+  // Esc while "Make this your working draft?" is asked only takes the question back.
+  dialog.addEventListener("cancel", (e) => {
+    if (confirmBox.hidden) return;
+    e.preventDefault();
+    asking(false);
+    restoreBtn.focus();
+  });
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
 
   // Restoring asks first, inside the dialog.
   restoreBtn.onclick = () => {

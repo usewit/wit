@@ -79,11 +79,10 @@ export async function initBooks(deps: Deps) {
     form.dataset.mode = m;
     $("book-dialog-title").textContent = m === "open" ? "Open a folder" : "Start something new";
     $("book-hint").textContent = m === "open"
-      ? "Choose the folder with the text (story.md, essay.md or a .fountain script) and its book.yaml."
+      ? "Type the path of a folder with the text (story.md, essay.md or a .fountain script), or of a single .md or .fountain file."
       : "Wit makes a folder with the text and its settings. Screenplays and plays are written in Fountain: plain text that lays itself out as a script.";
     $("book-place-label").firstChild!.textContent = m === "open" ? "Folder " : "Put it in ";
     $<HTMLButtonElement>("book-ok").textContent = m === "open" ? "Open" : "Create";
-    title.required = m === "create";
     if (m === "create") { title.value = ""; author.value = ""; }
     place.value = path || (m === "create" ? app.default_parent ?? "" : "");
     showError(null);
@@ -133,6 +132,7 @@ export async function initBooks(deps: Deps) {
   form.onsubmit = async (ev) => {
     ev.preventDefault();
     const parent = place.value.trim();
+    if (mode === "create" && !folderName(title.value)) { title.focus(); return showError("Give it a title."); }
     if (!parent) return showError(mode === "open" ? "Type the folder's path." : "Choose where to put it.");
     showError(null);
     const ok = $<HTMLButtonElement>("book-ok");
@@ -145,6 +145,7 @@ export async function initBooks(deps: Deps) {
             title: title.value,
             author: author.value,
             kind: form.querySelector<HTMLInputElement>("input[name=doc-kind]:checked")?.value ?? "book",
+            lang: $<HTMLSelectElement>("book-lang").value,
           });
       await done(data.id);
     } catch (e) {

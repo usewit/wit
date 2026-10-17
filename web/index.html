@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ro">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -23,7 +23,7 @@
             </button>
             <div id="book-list" class="menu" role="menu" aria-label="Books" hidden></div>
           </div>
-          <button class="icon-btn" data-cmd="book-new" aria-label="New book">
+          <button class="icon-btn" data-cmd="book-new" aria-label="New">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M12 11v6M9 14h6" /></svg>
           </button>
           <button class="icon-btn book-only" data-cmd="save" aria-label="Save">
@@ -232,8 +232,12 @@
       <p id="settings-msg" class="hint" role="status" aria-live="polite"></p>
       <form id="settings-form">
         <div class="style-pick">
-          <label>Style preset <select id="style-preset" aria-describedby="style-desc"></select></label>
+          <label>Template <select id="style-preset" aria-describedby="style-desc style-changes"></select></label>
           <p id="style-desc" class="hint"></p>
+          <div id="style-changes" class="style-changes" hidden>
+            <p></p>
+            <button id="style-reset" type="button">Back to the template</button>
+          </div>
         </div>
         <fieldset>
           <legend>Page</legend>
@@ -252,7 +256,19 @@
         <fieldset>
           <legend>Font</legend>
           <label>Typeface <select name="body_font_name"></select></label>
-          <label>Size, pt <input name="body_font_size_pt" type="number" min="8" max="30" step="0.5" /></label>
+          <label>Text size, pt <input name="body_font_size_pt" type="number" min="8" max="30" step="0.5" /></label>
+          <label>Language (for hyphenation and spell check)
+            <select name="lang">
+              <option value="en">English</option>
+              <option value="ro">Română (Romanian)</option>
+              <option value="de">Deutsch (German)</option>
+              <option value="es">Español (Spanish)</option>
+              <option value="fr">Français (French)</option>
+              <option value="it">Italiano (Italian)</option>
+              <option value="nl">Nederlands (Dutch)</option>
+              <option value="pt">Português (Portuguese)</option>
+            </select>
+          </label>
         </fieldset>
         <fieldset data-for="script">
           <legend>Script</legend>
@@ -437,6 +453,16 @@
         </fieldset>
         <label class="create-only">Title <input id="book-title" type="text" autocomplete="off" /></label>
         <label class="create-only">Author <input id="book-author" type="text" autocomplete="off" /></label>
+        <label class="create-only">Language <select id="book-lang">
+          <option value="en">English</option>
+          <option value="ro">Română (Romanian)</option>
+          <option value="de">Deutsch (German)</option>
+          <option value="es">Español (Spanish)</option>
+          <option value="fr">Français (French)</option>
+          <option value="it">Italiano (Italian)</option>
+          <option value="nl">Nederlands (Dutch)</option>
+          <option value="pt">Português (Portuguese)</option>
+        </select></label>
         <label id="book-place-label">Book folder <span class="path-row">
           <input id="book-place" type="text" spellcheck="false" autocomplete="off" />
           <button id="book-browse" type="button" class="browse">Browse…</button>

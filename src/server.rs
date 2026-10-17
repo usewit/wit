@@ -206,6 +206,7 @@ async fn pick_folder(State(books): State<Books>, Json(req): Json<PickReq>) -> Re
 
 #[derive(Deserialize)]
 struct OpenReq {
+    /// A document folder, or a `.md` / `.fountain` file in one.
     dir: PathBuf,
 }
 
@@ -225,13 +226,16 @@ struct CreateReq {
     /// "book", "essay", "screenplay" or "play".
     #[serde(default = "default_kind")]
     kind: String,
+    /// One of `settings::LANGUAGES`; English if left out, null or empty.
+    #[serde(default)]
+    lang: Option<String>,
 }
 fn default_kind() -> String {
     "book".into()
 }
 
 async fn create_book(State(books): State<Books>, Json(req): Json<CreateReq>) -> Response {
-    match books.lib.create(&req.dir, &req.title, &req.author, &req.kind) {
+    match books.lib.create(&req.dir, &req.title, &req.author, &req.kind, req.lang.as_deref().filter(|l| !l.is_empty()).unwrap_or("en")) {
         Ok(id) => Json(json!({ "id": id })).into_response(),
         Err(e) => err(StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")),
     }
@@ -297,6 +301,7 @@ async fn get_settings(State(books): State<Books>, Path(id): Path<String>) -> Res
         Ok(s) => Json(json!({
             "settings": s,
             "presets": settings::PRESETS,
+            "languages": settings::LANGUAGES,
             "styles": settings::style_presets(),
             "images": b.image_checks().unwrap_or_default(),
         }))
@@ -328,7 +333,11 @@ async fn put_settings(
 
 async fn get_history(State(books): State<Books>, Path(id): Path<String>) -> Response {
     match find(&books, &id) {
-        Ok(b) => Json(b.lock().await.history.entries()).into_response(),
+        Ok(b) => {
+            let b = b.lock().await;
+            let script = b.settings().is_ok_and(|s| book::is_script(&s.document_type));
+            Json(b.history.entries(script)).into_response()
+        }
         Err(r) => r,
     }
 }

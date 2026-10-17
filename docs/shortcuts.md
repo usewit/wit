@@ -79,7 +79,12 @@ the Mac uses a different key, shown in the Mac column.
 | Parenthetical | Ctrl+Shift+3 | ⌥⌘3 |
 | Transition | Ctrl+Shift+4 | ⌥⌘4 |
 | Centred text | Ctrl+Shift+5 | ⌥⌘5 |
+| Next element (name → speech, speech → new block) | Enter | Enter |
+| Choose the element of an empty line (in a speech: a parenthetical) | Tab | Tab |
+| A plain new line | Shift+Enter | ⇧Enter |
 
+On an empty line, Tab goes from action to character, scene heading, transition
+and back; in a stage play from character to act, scene and back.
 Bold, italic and underline work in scripts too.
 
 ## Editing
@@ -87,6 +92,6 @@ Bold, italic and underline work in scripts too.
 | What | Windows and Linux | Mac |
 |---|---|---|
 | Undo | Ctrl+Z | ⌘Z |
-| Redo | Ctrl+Shift+Z or Ctrl+Y | ⇧⌘Z |
+| Redo | Ctrl+Shift+Z or Ctrl+Y | ⇧⌘Z or ⌘Y |
 | Find and replace | Ctrl+F | ⌘F |
 | Select all | Ctrl+A | ⌘A |

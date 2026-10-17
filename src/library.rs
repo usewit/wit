@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 
-use crate::book::{Book, BookEntry, DOCUMENT_TYPES, default_font, is_script};
+use crate::book::{Book, BookEntry, DOCUMENT_TYPES, default_font, is_script, kind_from_source};
+use crate::settings::LANGUAGES;
 
 #[derive(Deserialize)]
 struct Workspace {
@@ -25,12 +26,14 @@ pub struct Slot {
     pub id: String,
     /// Canonical folder, to spot a book opened twice without locking it.
     dir: PathBuf,
+    /// The file it is written in, inside `dir`.
+    source: String,
     pub book: Arc<Mutex<Book>>,
 }
 
 impl Slot {
     fn new(entry: BookEntry) -> Self {
-        Slot { id: entry.id.clone(), dir: entry.dir.clone(), book: Arc::new(Mutex::new(Book::new(entry))) }
+        Slot { id: entry.id.clone(), dir: entry.dir.clone(), source: entry.source.clone(), book: Arc::new(Mutex::new(Book::new(entry))) }
     }
 }
 
@@ -82,20 +85,45 @@ impl Library {
         Some(if docs.is_dir() { docs } else { home })
     }
 
-    /// Add an existing document folder. Returns its id (the existing one if it
-    /// is already in the library).
-    pub fn open(&self, dir: &Path) -> Result<String> {
-        if !dir.is_dir() {
-            bail!("There is no folder at {}", dir.display());
-        }
-        let Some(source) = find_source(dir) else {
-            bail!("This folder has no story.md, essay.md or .fountain script, so it is not a Wit document. Use New to start one.");
+    /// Add an existing document: a folder, or a single `.md` or `.fountain`
+    /// file (its folder holds the settings and history). Returns its id (the
+    /// existing one if it is already in the library). A folder without a
+    /// book.yaml gets one saying what kind of document it is, so a script is
+    /// never taken for a book.
+    pub fn open(&self, path: &Path) -> Result<String> {
+        let (dir, source) = if path.is_file() {
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let lower = name.to_ascii_lowercase();
+            if !lower.ends_with(".md") && !lower.ends_with(".fountain") {
+                bail!("Wit opens Markdown (.md) and Fountain (.fountain) files; {name} is neither.");
+            }
+            let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            (dir.to_path_buf(), name)
+        } else if path.is_dir() {
+            let canon = path.canonicalize()?;
+            if let Some(s) = self.books.read().unwrap().iter().find(|s| s.dir == canon) {
+                return Ok(s.id.clone());
+            }
+            let Some(source) = find_source(path) else {
+                bail!("This folder has no story.md, essay.md or .fountain script, so it is not a Wit document. Use New to start one.");
+            };
+            (path.to_path_buf(), source)
+        } else {
+            bail!("There is no folder or file at {}", path.display());
         };
-        self.add(dir, &source)
+        let config = dir.join("book.yaml");
+        if !config.exists() {
+            let text = std::fs::read_to_string(dir.join(&source)).unwrap_or_default();
+            let kind = kind_from_source(&source, &text);
+            std::fs::write(&config, format!("# Settings. Wit's Page setup edits this file.\ndocument_type: {kind}\n"))
+                .with_context(|| format!("writing {}", config.display()))?;
+        }
+        self.add(&dir, &source)
     }
 
     /// Make a new document folder with a starter text and settings, then add it.
-    pub fn create(&self, dir: &Path, title: &str, author: &str, kind: &str) -> Result<String> {
+    /// `lang` is one of [`LANGUAGES`].
+    pub fn create(&self, dir: &Path, title: &str, author: &str, kind: &str, lang: &str) -> Result<String> {
         let title = title.trim();
         if title.is_empty() {
             bail!("Give it a title.");
@@ -103,6 +131,9 @@ impl Library {
         let Some((_, source)) = DOCUMENT_TYPES.iter().find(|(k, _)| *k == kind) else {
             bail!("Unknown kind of document: {kind}");
         };
+        if !LANGUAGES.contains(&lang) {
+            bail!("lang must be one of {}", LANGUAGES.join(", "));
+        }
         if dir.exists() && std::fs::read_dir(dir)?.next().is_some() {
             bail!("{} already exists and is not empty. Choose another name or place.", dir.display());
         }
@@ -112,8 +143,11 @@ impl Library {
             std::fs::create_dir_all(dir.join("images")).with_context(|| format!("creating {}", dir.display()))?;
         }
         let trim = if is_script(kind) { "8.5x11" } else if kind == "essay" { "6x9" } else { "a5" };
+        // New documents say their text size, so a later change of the default
+        // (14 pt for books without one) can't resize them.
+        let size = match kind { "book" => 12, "essay" => 11, _ => 12 };
         let yaml = format!(
-            "# Settings. Wit's Page setup edits this file.\ndocument_type: {kind}\nbook_title: {}author: {}trim_preset: {trim}\nbody_font_name: \"{}\"\n",
+            "# Settings. Wit's Page setup edits this file.\ndocument_type: {kind}\nbook_title: {}author: {}lang: {lang}\ntrim_preset: {trim}\nbody_font_name: \"{}\"\nbody_font_size_pt: {size}\n",
             serde_yaml::to_string(title)?,
             serde_yaml::to_string(author.trim())?,
             default_font(kind),
@@ -127,6 +161,10 @@ impl Library {
         let canon = dir.canonicalize()?;
         let mut books = self.books.write().unwrap();
         if let Some(s) = books.iter().find(|s| s.dir == canon) {
+            // One document per folder: they would share book.yaml and history.
+            if s.source != source {
+                bail!("{} is already open, written in {}. Wit keeps one document per folder; move {source} to a folder of its own.", dir.display(), s.source);
+            }
             return Ok(s.id.clone());
         }
         let base = slug(&canon.file_name().unwrap_or_default().to_string_lossy());
