@@ -1,28 +1,28 @@
 {
-    "version": "0.2.0",
-    "description": "A quiet place to write your books. Books, essays and screenplays as plain text, laid out as printed pages.",
-    "homepage": "https://www.usewit.app",
-    "license": "MIT",
-    "notes": "Wit needs Microsoft Edge WebView2, which Windows 11 includes. On Windows 10, install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 if Wit doesn't open.",
-    "architecture": {
-        "64bit": {
-            "url": "https://github.com/usewit/wit/releases/download/v0.2.0/Wit_0.2.0_x64-portable.zip",
-            "hash": "993263ba41261a82fdaaba761b2b9577bbf0a1bd5f6f77743374bce8219afbea"
-        }
-    },
-    "extract_dir": "Wit",
-    "shortcuts": [
-        [
-            "Wit.exe",
-            "Wit"
-        ]
-    ],
-    "checkver": "github",
-    "autoupdate": {
-        "architecture": {
-            "64bit": {
-                "url": "https://github.com/usewit/wit/releases/download/v$version/Wit_$version_x64-portable.zip"
-            }
-        }
+  "version": "0.2.0",
+  "description": "A quiet place to write your books. Books, essays and screenplays as plain text, laid out as printed pages.",
+  "homepage": "https://www.usewit.app",
+  "license": "MIT",
+  "notes": "Wit needs Microsoft Edge WebView2, which Windows 11 includes. On Windows 10, install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 if Wit doesn't open.",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/usewit/wit/releases/download/v0.2.0/Wit_0.2.0_x64-portable.zip",
+      "hash": "993263ba41261a82fdaaba761b2b9577bbf0a1bd5f6f77743374bce8219afbea"
     }
+  },
+  "extract_dir": "Wit",
+  "shortcuts": [
+    [
+      "Wit.exe",
+      "Wit"
+    ]
+  ],
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/usewit/wit/releases/download/v$version/Wit_$version_x64-portable.zip"
+      }
+    }
+  }
 }

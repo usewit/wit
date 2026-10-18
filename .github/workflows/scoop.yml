@@ -1,0 +1,47 @@
+# When a release is published, point the Scoop bucket (bucket/wit.json) at
+# its portable zip. Runs on publish, not on the draft, so Scoop never links
+# to a file nobody can download yet.
+name: Scoop
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.2.0"
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update bucket/wit.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          zip="Wit_${version}_x64-portable.zip"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$zip"
+          hash=$(sha256sum "$zip" | cut -d' ' -f1)
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$zip"
+          jq --arg v "$version" --arg u "$url" --arg h "$hash" \
+            '.version = $v | .architecture."64bit".url = $u | .architecture."64bit".hash = $h' \
+            bucket/wit.json > bucket/wit.json.new
+          mv bucket/wit.json.new bucket/wit.json
+          rm "$zip"
+          if git diff --quiet; then
+            echo "bucket/wit.json already points at $version"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Scoop: Wit $version"
+          git push
