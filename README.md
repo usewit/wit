@@ -18,9 +18,11 @@ the server, so pages update a few milliseconds after you stop typing.
 From Windows (WSL2), open http://localhost:7700. You need Rust and Node. The
 `typst` CLI is not needed.
 
-The first time it runs, Wit opens two samples from `examples/`: a short
-illustrated book and a screenplay. Open or create your own with Alt+O and
-Alt+N.
+The first time it runs, Wit opens six samples from `examples/`, all public
+domain: *Pride and Prejudice*, *A Christmas Carol*, *Alice's Adventures in
+Wonderland* with Tenniel's illustrations, Virginia Woolf's essay *A Room of
+One's Own*, Kafka's *Die Verwandlung* in German, and a short screenplay, *A
+Mad Tea-Party*. Open or create your own with Alt+O and Alt+N.
 
 Open documents are listed in `wit.json`, which is this computer's own list and
 is not committed. Each book is a directory with `story.md`, `book.yaml` and

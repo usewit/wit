@@ -1,0 +1,23 @@
+# Settings. Wit's Page setup edits this file.
+document_type: book
+book_title: Alice’s Adventures in Wonderland
+author: Lewis Carroll
+lang: en
+style_preset: hardback-demy
+trim_preset: demy
+margin_mm: 18
+margin_inner_mm: 20
+body_font_name: "EB Garamond"
+body_font_size_pt: 12
+chapter_title_font_size_pt: 20
+bleed_mm: 0
+line_height_mult: 1.35
+para_gap_lines: 0
+justify: true
+hyphenate: true
+first_line_indent: true
+chapter_new_page: true
+chapter_recto: true
+chapter_title_align: center
+page_number_position: bottom-outside
+page_number_font_size_pt: 9

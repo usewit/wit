@@ -98,7 +98,7 @@
   v(margin * 0.5)
   block(width: 100%, below: cfg.chapter_title_spacing_mult * cfg.body_font_size_pt * 1pt)[
     #set align(if cfg.chapter_title_align == "center" { center } else { left })
-    #set par(first-line-indent: 0pt)
+    #set par(first-line-indent: 0pt, justify: false)
     #text(size: cfg.chapter_title_font_size_pt * 1pt, weight: "bold", title)
   ]
 }
@@ -126,6 +126,7 @@
 #if cfg.include_title_page {
   page(foreground: none)[
     #set align(center)
+    #set par(justify: false)
     #v(30%)
     #text(size: cfg.title_page_title_font_size_pt * 1pt, weight: "bold", cfg.title)
     #if cfg.author != "" {

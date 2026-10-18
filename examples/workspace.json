@@ -1,6 +1,10 @@
 {
   "books": [
-    { "id": "the-lantern-keeper", "dir": "examples/the-lantern-keeper", "source": "story.md", "config": "book.yaml" },
-    { "id": "the-patrol", "dir": "examples/the-patrol", "source": "script.fountain", "config": "book.yaml" }
+    { "id": "pride-and-prejudice", "dir": "examples/pride-and-prejudice", "source": "story.md", "config": "book.yaml" },
+    { "id": "a-christmas-carol", "dir": "examples/a-christmas-carol", "source": "story.md", "config": "book.yaml" },
+    { "id": "alice-in-wonderland", "dir": "examples/alice-in-wonderland", "source": "story.md", "config": "book.yaml" },
+    { "id": "a-room-of-ones-own", "dir": "examples/a-room-of-ones-own", "source": "essay.md", "config": "book.yaml" },
+    { "id": "die-verwandlung", "dir": "examples/die-verwandlung", "source": "story.md", "config": "book.yaml" },
+    { "id": "a-mad-tea-party", "dir": "examples/a-mad-tea-party", "source": "script.fountain", "config": "book.yaml" }
   ]
 }

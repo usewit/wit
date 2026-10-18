@@ -1,0 +1,23 @@
+# Settings. Wit's Page setup edits this file.
+document_type: book
+book_title: Die Verwandlung
+author: Franz Kafka
+lang: de
+style_preset: novel-13x20
+trim_preset: 13x20
+margin_mm: 15
+margin_inner_mm: 17
+body_font_name: "EB Garamond"
+body_font_size_pt: 11.5
+chapter_title_font_size_pt: 18
+bleed_mm: 0
+line_height_mult: 1.35
+para_gap_lines: 0
+justify: true
+hyphenate: true
+first_line_indent: true
+chapter_new_page: true
+chapter_recto: true
+chapter_title_align: center
+page_number_position: bottom-outside
+page_number_font_size_pt: 9

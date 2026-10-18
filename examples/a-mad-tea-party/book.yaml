@@ -1,6 +1,9 @@
 # Settings. Wit's Page setup edits this file.
 document_type: screenplay
-book_title: The Patrol
+book_title: A Mad Tea-Party
 author: Wit sample
+lang: en
+style_preset: screenplay-letter
 trim_preset: 8.5x11
 body_font_name: "Courier Prime"
+body_font_size_pt: 12
