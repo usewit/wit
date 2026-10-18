@@ -69,6 +69,20 @@ fn start(app: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else if entry.file_name() != "workspace.json" {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Bundled resources sit next to the app; the workspace file lives in the
 /// user's config folder unless `WIT_WORKSPACE` points elsewhere.
 fn config(app: &App) -> anyhow::Result<wit::Config> {
@@ -83,6 +97,13 @@ fn config(app: &App) -> anyhow::Result<wit::Config> {
             if !workspace.exists() && old.is_file() {
                 std::fs::create_dir_all(&dir)?;
                 std::fs::copy(&old, &workspace)?;
+            }
+            // First run: copy the bundled samples where they can be edited,
+            // and list them. Their paths are relative to wit.json.
+            let samples = res.join("examples");
+            if !workspace.exists() && samples.join("workspace.json").is_file() {
+                copy_dir(&samples, &dir.join("examples"))?;
+                std::fs::copy(samples.join("workspace.json"), &workspace)?;
             }
             workspace
         }

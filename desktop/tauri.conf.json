@@ -20,7 +20,8 @@
       "../web/dist/": "web/",
       "../fonts/*.ttf": "fonts/",
       "../fonts/README.md": "fonts/README.md",
-      "../fonts/licenses/": "fonts/licenses/"
+      "../fonts/licenses/": "fonts/licenses/",
+      "../examples/": "examples/"
     }
   }
 }
