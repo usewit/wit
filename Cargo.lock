@@ -6961,6 +6961,10 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
+ "objc2",
+ "objc2-foundation",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

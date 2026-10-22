@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": { "beforeBuildCommand": "" },
+  "bundle": {
+    "targets": ["app"],
+    "macOS": {
+      "entitlements": "Entitlements.appstore.plist",
+      "files": { "embedded.provisionprofile": "embedded.provisionprofile" }
+    }
+  }
+}

@@ -16,3 +16,10 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["net"] }
 url = "2"
+
+# App Store sandbox: remember the folders people open (security-scoped bookmarks).
+[target.'cfg(target_os = "macos")'.dependencies]
+base64 = "0.22"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSURL", "NSData", "NSString", "NSError", "NSArray"] }
+serde_json = "1"

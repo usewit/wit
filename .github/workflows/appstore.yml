@@ -1,0 +1,117 @@
+# Build the Mac App Store version of Wit (universal, sandboxed) as a signed
+# .pkg and upload it to App Store Connect, where it shows up as a new build
+# for the app record app.wit.desktop. Runs by hand: Actions → Mac App Store →
+# Run workflow. Submitting the build for review is done in App Store Connect.
+#
+# Unlike the notarized .dmg (macos.yml), this build is sandboxed: see
+# desktop/Entitlements.appstore.plist and desktop/src/bookmarks.rs.
+#
+# Repository secrets:
+#   APPSTORE_APP_CERTIFICATE        Apple Distribution .p12, base64
+#   APPSTORE_INSTALLER_CERTIFICATE  Mac Installer Distribution .p12, base64
+#   APPSTORE_CERTIFICATE_PASSWORD   password of both .p12 files
+#   APPSTORE_PROFILE                Mac App Store provisioning profile, base64
+#   APPLE_TEAM_ID                   the 10-character team ID
+#   APPLE_API_KEY                   App Store Connect API key ID
+#   APPLE_API_ISSUER                its issuer ID
+#   APPLE_API_KEY_P8                the .p8 key file's contents
+name: Mac App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload the .pkg to App Store Connect
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web app
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Certificates and profile
+        env:
+          APP_CERT: ${{ secrets.APPSTORE_APP_CERTIFICATE }}
+          INSTALLER_CERT: ${{ secrets.APPSTORE_INSTALLER_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPSTORE_CERTIFICATE_PASSWORD }}
+          PROFILE: ${{ secrets.APPSTORE_PROFILE }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/appstore.keychain-db"
+          pass=$(uuidgen)
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          for cert in "$APP_CERT" "$INSTALLER_CERT"; do
+            printf '%s' "$cert" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/productbuild
+          done
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$pass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          app_id=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Apple Distribution: [^"]*"' | head -1 | tr -d '"')
+          installer_id=$(security find-identity -v "$keychain" | grep -o '"3rd Party Mac Developer Installer: [^"]*"\|"Mac Installer Distribution: [^"]*"' | head -1 | tr -d '"')
+          echo "App: $app_id"
+          echo "Installer: $installer_id"
+          [ -n "$app_id" ] && [ -n "$installer_id" ]
+          echo "APPLE_SIGNING_IDENTITY=$app_id" >> "$GITHUB_ENV"
+          echo "INSTALLER_IDENTITY=$installer_id" >> "$GITHUB_ENV"
+
+          printf '%s' "$PROFILE" | base64 --decode > desktop/embedded.provisionprofile
+          sed -i '' "s/TEAM_ID/$TEAM_ID/g" desktop/Entitlements.appstore.plist
+
+      - name: Build Wit.app
+        working-directory: desktop
+        run: |
+          # Every upload needs a new build number; the version stays as in
+          # tauri.conf.json. No notarization: App Store builds aren't notarized.
+          npx -y @tauri-apps/cli@2 build --target universal-apple-darwin \
+            --config tauri.appstore.conf.json \
+            --config "{\"bundle\":{\"macOS\":{\"bundleVersion\":\"${{ github.run_number }}\"}}}"
+          app=../target/universal-apple-darwin/release/bundle/macos/Wit.app
+          codesign -d --entitlements - "$app"
+          codesign --verify --deep --strict "$app"
+
+      - name: Make the .pkg
+        run: |
+          xcrun productbuild --sign "$INSTALLER_IDENTITY" \
+            --component target/universal-apple-darwin/release/bundle/macos/Wit.app /Applications \
+            Wit-appstore.pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wit-appstore
+          path: Wit-appstore.pkg
+          if-no-files-found: error
+
+      - name: Upload to App Store Connect
+        if: inputs.upload
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$API_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_$API_KEY.p8
+          xcrun altool --upload-app -t macos -f Wit-appstore.pkg --apiKey "$API_KEY" --apiIssuer "$API_ISSUER"

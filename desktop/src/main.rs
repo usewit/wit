@@ -12,6 +12,9 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
+#[cfg(target_os = "macos")]
+mod bookmarks;
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -108,6 +111,13 @@ fn config(app: &App) -> anyhow::Result<wit::Config> {
             workspace
         }
     };
+    // Sandboxed Mac app: reopen the folders picked in earlier sessions.
+    #[cfg(target_os = "macos")]
+    let marks = {
+        let marks = workspace.with_file_name("bookmarks.json");
+        bookmarks::restore(&marks);
+        marks
+    };
     let handle = app.handle().clone();
     let pick_folder: wit::FolderPicker = Arc::new(move |start: Option<PathBuf>| {
         let mut dialog = handle.dialog().file().set_title("Choose a folder");
@@ -117,7 +127,10 @@ fn config(app: &App) -> anyhow::Result<wit::Config> {
         if let Some(dir) = start.filter(|d| d.is_dir()) {
             dialog = dialog.set_directory(dir);
         }
-        dialog.blocking_pick_folder()?.into_path().ok()
+        let folder = dialog.blocking_pick_folder()?.into_path().ok()?;
+        #[cfg(target_os = "macos")]
+        bookmarks::remember(&marks, &folder);
+        Some(folder)
     });
     let handle = app.handle().clone();
     let save_file: wit::FileSaver = Arc::new(move |name: String| {

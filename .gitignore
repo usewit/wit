@@ -9,3 +9,6 @@ desktop/gen/
 
 # Version history Wit keeps inside the sample documents when you try them.
 examples/*/.wit/
+
+# Mac App Store provisioning profile, written by appstore.yml.
+desktop/embedded.provisionprofile
