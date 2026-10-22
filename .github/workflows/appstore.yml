@@ -79,7 +79,9 @@ jobs:
           echo "INSTALLER_IDENTITY=$installer_id" >> "$GITHUB_ENV"
 
           printf '%s' "$PROFILE" | base64 --decode > desktop/embedded.provisionprofile
-          sed -i '' "s/TEAM_ID/$TEAM_ID/g" desktop/Entitlements.appstore.plist
+          # Stray whitespace in the secret breaks the profile match (error 90288).
+          team=$(printf '%s' "$TEAM_ID" | tr -d '[:space:]')
+          sed -i '' "s/TEAM_ID/$team/g" desktop/Entitlements.appstore.plist
 
       - name: Build Wit.app
         working-directory: desktop
