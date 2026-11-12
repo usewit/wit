@@ -6,17 +6,12 @@ use std::path::PathBuf;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = env("WORKSPACE").map(PathBuf::from).unwrap_or_else(|| {
-        // A fresh checkout starts with the sample books, essay and screenplay. wit.json
-        // is this computer's own list and is not committed.
-        let ws = root.join("wit.json");
-        if !ws.exists() && !root.join("quire.json").exists() {
-            let _ = std::fs::copy(root.join("examples/workspace.json"), &ws);
-        }
-        ws
-    });
+    // wit.json is this computer's own list and is not committed. The samples
+    // in examples/ are always offered, read-only.
+    let workspace = env("WORKSPACE").map(PathBuf::from).unwrap_or_else(|| root.join("wit.json"));
     let cfg = wit::Config {
         workspace,
+        samples: Some(root.join("examples")),
         fonts: root.join("fonts"),
         web: root.join("web/dist"),
         pick_folder: None,

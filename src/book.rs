@@ -477,6 +477,50 @@ fn hash_bytes(b: &[u8]) -> String {
     format!("{h:016x}")
 }
 
+/// Put a picture into `<dir>/images/` and return its path ("images/x.png").
+/// Only PNG and JPEG files are taken, judged by their content. The name is
+/// kept (folders in it dropped); if another picture already has it, the new
+/// one becomes "x-2.png", and an identical picture is not stored twice.
+pub fn add_image(dir: &Path, name: &str, bytes: &[u8]) -> Result<String> {
+    let png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+    let jpg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
+    if !png && !jpg {
+        anyhow::bail!("{name} is not a PNG or JPG picture.");
+    }
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    let (stem, ext) = match base.rsplit_once('.') {
+        Some((s, e)) if !s.trim().is_empty() => (s.trim(), e.to_ascii_lowercase()),
+        _ => ("picture", String::new()),
+    };
+    // Keep the extension honest, so the preview and exports read it right.
+    let ext = match (png, ext.as_str()) {
+        (true, _) => "png",
+        (false, "jpeg") => "jpeg",
+        _ => "jpg",
+    };
+    let stem: String = stem.chars().map(|c| if c.is_control() || "<>:\"|?*".contains(c) { '-' } else { c }).collect();
+    let stem = stem.trim_start_matches('.');
+    let stem = if stem.is_empty() { "picture" } else { stem };
+    let images = dir.join("images");
+    std::fs::create_dir_all(&images).with_context(|| format!("creating {}", images.display()))?;
+    for n in 1.. {
+        let file = if n == 1 { format!("{stem}.{ext}") } else { format!("{stem}-{n}.{ext}") };
+        let path = images.join(&file);
+        match std::fs::read(&path) {
+            Ok(existing) if existing == bytes => return Ok(format!("images/{file}")),
+            Ok(_) => continue,
+            Err(_) if path.exists() => continue,
+            Err(_) => {
+                let tmp = images.join(format!(".{file}.wit-tmp"));
+                std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", path.display()))?;
+                std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
+                return Ok(format!("images/{file}"));
+            }
+        }
+    }
+    unreachable!()
+}
+
 pub enum SaveError {
     Conflict(String),
     Io(anyhow::Error),
@@ -485,6 +529,26 @@ pub enum SaveError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adding_images() {
+        let dir = std::env::temp_dir().join(format!("wit-add-image-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = b"\x89PNG\r\n\x1a\nAAAA";
+        let jpg = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2];
+        assert_eq!(add_image(&dir, "Map.PNG", png).unwrap(), "images/Map.png");
+        // The same picture again is kept once; a different one gets a new name.
+        assert_eq!(add_image(&dir, "Map.png", png).unwrap(), "images/Map.png");
+        assert_eq!(add_image(&dir, "Map.png", b"\x89PNG\r\n\x1a\nBBBB").unwrap(), "images/Map-2.png");
+        // Folders in the name are dropped; the extension follows the content.
+        assert_eq!(add_image(&dir, "../../x/cat.png", &jpg).unwrap(), "images/cat.jpg");
+        assert_eq!(add_image(&dir, "photo.jpeg", &jpg).unwrap(), "images/photo.jpeg");
+        assert_eq!(add_image(&dir, ".png", png).unwrap(), "images/picture.png");
+        assert!(add_image(&dir, "notes.png", b"hello").is_err());
+        assert!(dir.join("images/Map-2.png").is_file());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn kind_from_the_file() {

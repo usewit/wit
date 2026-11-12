@@ -47,6 +47,8 @@ pub struct Config {
     /// `wit.json`, listing the books. Relative book dirs resolve against its
     /// folder. Created when the first book is opened, if missing.
     pub workspace: PathBuf,
+    /// The bundled samples (a folder with `workspace.json`), shown read-only.
+    pub samples: Option<PathBuf>,
     /// Fonts preferred over system fonts.
     pub fonts: PathBuf,
     /// The built web UI (`web/dist`).
@@ -60,7 +62,7 @@ pub struct Config {
 
 /// Load the workspace and build the app. Call once per process (fonts are global).
 pub fn router(cfg: Config) -> anyhow::Result<Router> {
-    let books: Books = Arc::new(App { lib: Library::load(cfg.workspace)?, look: Default::default(), picker: cfg.pick_folder, saver: cfg.save_file, opener: cfg.open_file });
+    let books: Books = Arc::new(App { lib: Library::load(cfg.workspace, cfg.samples.as_deref())?, look: Default::default(), picker: cfg.pick_folder, saver: cfg.save_file, opener: cfg.open_file });
     engine::init_fonts(&cfg.fonts);
 
     let web = &cfg.web;
@@ -84,6 +86,11 @@ pub fn router(cfg: Config) -> anyhow::Result<Router> {
         .route("/api/books/{id}/export/{format}", get(get_export))
         .route("/api/books/{id}/save/{kind}", axum::routing::post(save_file))
         .route("/api/books/{id}/asset/{*path}", get(get_asset))
+        .route("/api/books/{id}/copy", axum::routing::post(copy_sample))
+        .route(
+            "/api/books/{id}/images",
+            axum::routing::post(add_image).layer(axum::extract::DefaultBodyLimit::max(MAX_IMAGE_BYTES)),
+        )
         .route("/api/{*rest}", axum::routing::any(|| async { err(StatusCode::NOT_FOUND, "no such endpoint") }))
         .fallback_service(ServeDir::new(web).fallback(ServeFile::new(web.join("index.html"))))
         .layer(axum::middleware::from_fn(check_host))
@@ -136,6 +143,14 @@ fn find(books: &Books, id: &str) -> Result<Arc<Mutex<Book>>, Response> {
     books.lib.get(id).ok_or_else(|| err(StatusCode::NOT_FOUND, "no such book"))
 }
 
+/// A book that may be changed: not one of the read-only samples.
+fn find_own(books: &Books, id: &str) -> Result<Arc<Mutex<Book>>, Response> {
+    if books.lib.is_sample(id) {
+        return Err(err(StatusCode::FORBIDDEN, "This is a sample, so it can't be changed. Save your own copy to edit it."));
+    }
+    find(books, id)
+}
+
 async fn list_books(State(books): State<Books>) -> Response {
     let mut out = vec![];
     for slot in books.lib.list() {
@@ -144,6 +159,13 @@ async fn list_books(State(books): State<Books>) -> Response {
         let title = s.as_ref().map(|s| s.title.clone()).unwrap_or_else(|| slot.id.clone());
         let kind = s.map(|s| s.document_type).unwrap_or_else(|| "book".into());
         out.push(json!({ "id": slot.id, "title": title, "dir": b.dir(), "kind": kind }));
+    }
+    for slot in books.lib.samples() {
+        let b = slot.book.lock().await;
+        let s = b.settings().ok();
+        let title = s.as_ref().map(|s| s.title.clone()).unwrap_or_else(|| slot.id.clone());
+        let kind = s.map(|s| s.document_type).unwrap_or_else(|| "book".into());
+        out.push(json!({ "id": slot.id, "title": title, "dir": b.dir(), "kind": kind, "sample": true }));
     }
     Json(out).into_response()
 }
@@ -260,6 +282,7 @@ async fn get_book(State(books): State<Books>, Path(id): Path<String>) -> Respons
         "settings_error": settings.as_ref().err(),
         "images": b.list_images(),
         "revision": b.history.latest(),
+        "sample": books.lib.is_sample(&id),
     }))
     .into_response()
 }
@@ -272,7 +295,7 @@ struct SaveReq {
 
 /// Save, then re-render the preview so the client gets fresh pages in one trip.
 async fn put_source(State(books): State<Books>, Path(id): Path<String>, Json(req): Json<SaveReq>) -> Response {
-    let book = match find(&books, &id) {
+    let book = match find_own(&books, &id) {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -316,7 +339,7 @@ async fn put_settings(
     Path(id): Path<String>,
     Json(changes): Json<serde_json::Map<String, serde_json::Value>>,
 ) -> Response {
-    let book = match find(&books, &id) {
+    let book = match find_own(&books, &id) {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -350,7 +373,7 @@ struct NameReq {
 
 /// Freeze the working draft as the next named revision.
 async fn name_revision(State(books): State<Books>, Path(id): Path<String>, Json(req): Json<NameReq>) -> Response {
-    let book = match find(&books, &id) {
+    let book = match find_own(&books, &id) {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -382,7 +405,7 @@ async fn restore_snapshot(
     Path((id, file)): Path<(String, String)>,
     Json(req): Json<RestoreReq>,
 ) -> Response {
-    let book = match find(&books, &id) {
+    let book = match find_own(&books, &id) {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -455,6 +478,49 @@ async fn get_asset(State(books): State<Books>, Path((id, path)): Path<(String, S
     let full = book.lock().await.dir().join(&path);
     let ct = if path.to_ascii_lowercase().ends_with(".png") { "image/png" } else { "image/jpeg" };
     send_file(full, ct, None).await
+}
+
+#[derive(Deserialize)]
+struct CopyReq {
+    /// The new folder for the copy; must not exist yet, or be empty.
+    dir: PathBuf,
+}
+
+/// "Save a copy" of a sample: an editable book in a folder the writer chose.
+async fn copy_sample(State(books): State<Books>, Path(id): Path<String>, Json(req): Json<CopyReq>) -> Response {
+    match books.lib.copy_sample(&id, &req.dir) {
+        Ok(id) => Json(json!({ "id": id })).into_response(),
+        Err(e) => err(StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")),
+    }
+}
+
+/// Largest picture "Add images" takes (a full-page scan at 300 dpi fits).
+const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Deserialize)]
+struct ImageQuery {
+    /// The picked file's name, e.g. "Map of the island.png".
+    name: String,
+}
+
+/// Add a picture to the book's `images/` folder. The body is the file. A file
+/// with the same name and different content gets a new name ("map-2.png");
+/// the same picture added twice is kept once.
+async fn add_image(
+    State(books): State<Books>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<ImageQuery>,
+    body: axum::body::Bytes,
+) -> Response {
+    let book = match find_own(&books, &id) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let b = book.lock().await;
+    match book::add_image(b.dir(), &q.name, &body) {
+        Ok(path) => Json(json!({ "path": path, "images": b.list_images() })).into_response(),
+        Err(e) => err(StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")),
+    }
 }
 
 /// `kind` is `print` (white pages, for the printer) or `proof` (as configured).

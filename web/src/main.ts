@@ -41,6 +41,8 @@ interface BookData {
   images: string[];
   settings_error: string | null;
   revision: Revision | null;
+  /** One of the bundled samples: read-only until the writer saves a copy. */
+  sample?: boolean;
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -50,6 +52,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 let bookId = "";
 let baseHash = "";
 let images: string[] = [];
+/// The open document is a read-only sample.
+let sample = false;
 let saving = false;
 let saveAgain = false;
 let conflict = false;
@@ -158,6 +162,7 @@ const doubleHyphen = EditorView.inputHandler.of((view, from, to, text) => {
 const langCompartment = new Compartment();
 const historyCompartment = new Compartment();
 const attrsCompartment = new Compartment();
+const readOnlyCompartment = new Compartment();
 const KIND_NAMES: Record<string, string> = { book: "Book", essay: "Essay", screenplay: "Screenplay", play: "Play" };
 /// The editor's language (for spell check and screen readers) and label.
 const editorAttrs = (lang: string) =>
@@ -210,6 +215,7 @@ const view = new EditorView({
       editorTheme,
       focusCompartment.of([]),
       attrsCompartment.of(editorAttrs("en")),
+      readOnlyCompartment.of([]),
       spellCompartment.of(spellExtension(spellOn())),
       // Shortcuts like Ctrl+B live in the command list (main.ts, commands.ts).
       keymap.of([
@@ -333,7 +339,7 @@ async function saveNow() {
 }
 
 async function save() {
-  if (conflict || !bookId) return;
+  if (conflict || !bookId || sample) return;
   if (saving) { saveAgain = true; return; }
   const editorText = view.state.doc.toString();
   if (editorText === lastSaved) { setStatus("Saved"); return; }
@@ -514,6 +520,9 @@ async function loadBook(id: string, discardDraft = false) {
   setStatus("Loading…");
   const res = await fetch(`/api/books/${id}`);
   const data: BookData = await res.json();
+  sample = !!data.sample;
+  view.dispatch({ effects: readOnlyCompartment.reconfigure(sample ? EditorState.readOnly.of(true) : []) });
+  if (!$("welcome").hidden) showWelcome(false);
   baseHash = data.hash;
   setRevision(data.revision);
   images = data.images;
@@ -524,7 +533,7 @@ async function loadBook(id: string, discardDraft = false) {
   diskLines = ed.diskLines;
 
   // Drafts are stored in Markdown file form.
-  const draft = discardDraft ? null : store.get(`draft.${id}`);
+  const draft = discardDraft || sample ? null : store.get(`draft.${id}`);
   const draftBase = store.get(`draftBase.${id}`) ?? "";
   setDoc(ed.text);
   if (discardDraft) dropDraft(id);
@@ -546,10 +555,11 @@ async function loadBook(id: string, discardDraft = false) {
   }
   // Files with paragraphs on consecutive lines (no blank line between) print
   // as one long paragraph; save once so each line becomes its own paragraph.
-  if (!draft && toFile(ed.text).text !== data.source) {
+  if (!draft && !sample && toFile(ed.text).text !== data.source) {
     lastSaved = "";
     window.setTimeout(() => save(), 0);
   }
+  if (sample) showSampleBanner();
   if (data.settings_error) showBanner(`<span>book.yaml problem: ${escapeHtml(data.settings_error)}</span>`, true);
 
   document.title = `${bookList.find((b) => b.id === id)?.title ?? "Book"} — Wit`;
@@ -557,6 +567,22 @@ async function loadBook(id: string, discardDraft = false) {
   sidebars.bookChanged();
   view.focus();
   refreshPreview();
+}
+
+let bookUi: Awaited<ReturnType<typeof initBooks>> | undefined;
+
+/** A sample is for reading; editing starts with a copy of one's own. */
+function showSampleBanner() {
+  showBanner(
+    `<span>This is a sample, so it can't be changed. Save your own copy to edit it, add pictures and make it yours.</span>
+     <button id="sample-copy" class="primary">Save a copy…</button>`,
+  );
+  $("sample-copy").onclick = () => saveSampleCopy();
+}
+
+function saveSampleCopy() {
+  if (!sample) return;
+  bookUi?.showCopy(bookId, bookList.find((b) => b.id === bookId)?.title ?? "Sample");
 }
 
 function escapeHtml(s: string) {
@@ -569,8 +595,26 @@ let bookList: BookItem[] = [];
 async function loadBookList() {
   bookList = await (await fetch("/api/books")).json();
   renderBookMenu(bookList, bookId);
-  showWelcome(bookList.length === 0);
+  renderWelcomeSamples();
+  showWelcome(!bookId && !bookList.some((b) => !b.sample));
   return bookList;
+}
+
+/** The welcome page offers the samples to read. */
+function renderWelcomeSamples() {
+  const box = $("welcome-samples");
+  const samples = bookList.filter((b) => b.sample);
+  box.hidden = samples.length === 0;
+  const list = $("welcome-sample-list");
+  list.innerHTML = "";
+  for (const b of samples) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "link-btn";
+    btn.textContent = b.title;
+    btn.onclick = () => loadBook(b.id);
+    list.append(btn);
+  }
 }
 
 /** No book yet: a calm first page instead of an empty editor. */
@@ -584,7 +628,7 @@ function showWelcome(on: boolean) {
 }
 
 async function init() {
-  const bookUi = await initBooks({
+  bookUi = await initBooks({
     async opened(id) {
       if (bookId && view.state.doc.toString() !== lastSaved) await save();
       await loadBookList();
@@ -605,6 +649,7 @@ async function init() {
   $("welcome-theme").onclick = () => prefs.nextTheme();
   addCommands([
     { id: "book-open", category: "Document", title: "Open a folder…", keys: ["Alt+O", "Mod+O"], run: bookUi.showOpen },
+    { id: "sample-copy", category: "Document", title: "Save a copy of this sample…", run: saveSampleCopy, enabled: () => hasBook() && sample },
     { id: "book-new", category: "Document", title: "New book, essay, screenplay or play…", keys: ["Alt+N"], macKeys: ["Mod+Alt+N", "Alt+N"], run: bookUi.showCreate },
   ]);
   // "New" is registered only now, so its tooltip is too.
@@ -612,7 +657,7 @@ async function init() {
 
   await prefs.pagesReady;
   const books = await loadBookList();
-  const start = books.find((b) => b.id === store.get("book"))?.id ?? books[0]?.id;
+  const start = books.find((b) => b.id === store.get("book"))?.id ?? books.find((b) => !b.sample)?.id;
   if (start) await loadBook(start);
 }
 
@@ -644,9 +689,17 @@ async function pickImage() {
   list.innerHTML = "";
   picked = "";
   $<HTMLButtonElement>("image-ok").disabled = true;
+  $("image-add-status").textContent = "";
+  renderImageList();
+  dialog.showModal();
+}
+
+function renderImageList(select = "") {
+  const list = $("image-list");
+  list.innerHTML = "";
   if (images.length === 0) {
     list.innerHTML = `<p class="empty-note"><strong>No pictures yet</strong>
-      Put PNG or JPG files in the book's <code>images/</code> folder, then choose Image again.</p>`;
+      Choose “Add images…” to bring PNG or JPG files into this book.</p>`;
   }
   for (const path of images) {
     const b = document.createElement("button");
@@ -663,9 +716,44 @@ async function pickImage() {
       $<HTMLButtonElement>("image-ok").disabled = false;
     };
     list.append(b);
+    if (path === select) { b.click(); b.scrollIntoView({ block: "nearest" }); }
   }
-  dialog.showModal();
 }
+
+/// "Add images…": copy the chosen files into the book's images/ folder,
+/// then show them, with the last one selected.
+const imageFile = $<HTMLInputElement>("image-file");
+$("image-add").onclick = () => imageFile.click();
+imageFile.onchange = async () => {
+  const files = Array.from(imageFile.files ?? []);
+  imageFile.value = "";
+  if (!files.length) return;
+  const status = $("image-add-status");
+  const btn = $<HTMLButtonElement>("image-add");
+  btn.disabled = true;
+  let last = "";
+  const failed: string[] = [];
+  for (const [i, f] of files.entries()) {
+    status.textContent = files.length > 1 ? `Adding ${i + 1} of ${files.length}…` : "Adding…";
+    try {
+      const res = await fetch(`/api/books/${bookId}/images?name=${encodeURIComponent(f.name)}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: f,
+      });
+      const data = await res.json().catch(() => ({ error: res.status === 413 ? `${f.name} is too large.` : res.statusText }));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      images = data.images;
+      last = data.path;
+    } catch (e) {
+      failed.push((e as Error).message);
+    }
+  }
+  btn.disabled = false;
+  status.textContent = failed.join(" ");
+  status.classList.toggle("bad", failed.length > 0);
+  renderImageList(last || picked);
+};
 dialog.addEventListener("close", () => {
   if (dialog.returnValue !== "ok" || !picked) { view.focus(); return; }
   const placement = (dialog.querySelector<HTMLInputElement>("input[name=placement]:checked")?.value) ?? "";
@@ -847,7 +935,7 @@ $("export-dialog").addEventListener("click", (e) => { if (e.target === e.current
 
 const hasBook = () => !!bookId && !document.body.classList.contains("no-book");
 // Writing commands need the editor on screen.
-const canWrite = () => hasBook() && (layout() !== "pages" || focusOn);
+const canWrite = () => hasBook() && !sample && (layout() !== "pages" || focusOn);
 const fmt = (f: () => boolean): (() => void) => () => { f(); };
 const canProse = () => canWrite() && !isScript();
 const canScript = () => canWrite() && isScript();

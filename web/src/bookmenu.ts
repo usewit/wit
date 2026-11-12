@@ -2,7 +2,7 @@
 // Drawn by Wit rather than a <select>, whose list Windows draws in its own
 // (often light) colours.
 
-export interface BookItem { id: string; title: string; dir: string; kind?: string }
+export interface BookItem { id: string; title: string; dir: string; kind?: string; sample?: boolean }
 
 const KIND_NAMES: Record<string, string> = { essay: "Essay", screenplay: "Screenplay", play: "Stage play" };
 
@@ -73,7 +73,9 @@ function shortDir(dir: string) {
 export function renderBookMenu(books: BookItem[], current: string) {
   const el = list();
   el.innerHTML = "";
-  for (const b of books) {
+  const own = books.filter((b) => !b.sample);
+  const samples = books.filter((b) => b.sample);
+  const add = (b: BookItem) => {
     const item = document.createElement("button");
     item.setAttribute("role", "menuitemradio");
     item.setAttribute("aria-checked", String(b.id === current));
@@ -83,9 +85,22 @@ export function renderBookMenu(books: BookItem[], current: string) {
     t.className = "t";
     t.textContent = b.title;
     const d = document.createElement("small");
-    d.textContent = (KIND_NAMES[b.kind ?? ""] ? KIND_NAMES[b.kind!] + " · " : "") + shortDir(b.dir);
+    const kind = KIND_NAMES[b.kind ?? ""] ?? (b.sample ? "Book" : "");
+    // Samples live inside the app; their folder means nothing to the writer.
+    d.textContent = b.sample ? kind : (kind ? kind + " · " : "") + shortDir(b.dir);
+    if (b.sample) item.title = "A sample: read it, or save your own copy to edit it";
     item.append(t, d);
     el.append(item);
+  };
+  own.forEach(add);
+  if (samples.length) {
+    if (own.length) el.append(document.createElement("hr"));
+    const head = document.createElement("div");
+    head.className = "menu-head";
+    head.setAttribute("role", "presentation");
+    head.textContent = "Samples";
+    el.append(head);
+    samples.forEach(add);
   }
   if (books.length) el.append(document.createElement("hr"));
   for (const [act, icon, label] of [["open", "↗", "Open a folder…"], ["new", "+", "New book, essay or script…"]]) {

@@ -215,6 +215,7 @@ body.bar-hidden .bar { display: none; }
 .menu button[aria-checked="true"]::before { content: "✓"; color: var(--accent); font-weight: 700; grid-row: 1; }
 .menu button .i { grid-column: 1; grid-row: 1; color: var(--muted); text-align: center; font-size: 18px; line-height: 1; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 8px; }
+.menu .menu-head { padding: 6px 14px 2px; color: var(--muted); font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
 
 /* A choice of a few: a soft track with the chosen option raised out of it. */
 .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel); border-radius: 10px; flex-wrap: wrap; }
@@ -273,6 +274,10 @@ body.no-book .bar { border-bottom-color: transparent; }
 .primary-choice:hover { background: var(--accent-soft); }
 .primary-choice strong { color: var(--accent); }
 .primary-choice:hover { border-color: var(--accent); }
+.welcome-samples { margin-top: 28px; max-width: 30rem; }
+.welcome-samples .hint { margin: 0 0 4px; }
+#welcome-sample-list { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+#welcome-sample-list .link-btn { margin-top: 0; font-family: var(--serif); font-size: 17px; }
 .link-btn { margin-top: 28px; padding: 6px 0; color: var(--muted); text-decoration: underline; text-underline-offset: 4px; }
 .stat-group .link-btn { margin-top: 0; }
 .stat-actions { display: flex; flex-wrap: wrap; gap: 4px 20px; }
@@ -420,7 +425,10 @@ main.layout-pages .preview-pane .seg { display: none; }
 .changes-text p { margin: 0 0 0.9em; padding: 4px 10px; border-radius: 8px; cursor: pointer; }
 .changes-text p.c-same { color: var(--muted); }
 .changes-text p.here { background: var(--raised); }
-.changes .empty-note { font-family: inherit; font-size: 16px; }
+.changes .image-add { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0 0; }
+.image-add .hint { margin: 0; }
+.image-add .hint.bad { color: var(--error-text); }
+.empty-note { font-family: inherit; font-size: 16px; }
 .zoom input { accent-color: var(--accent); width: 140px; }
 .pages {
   --page-w: 70%;
@@ -511,7 +519,8 @@ menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 2
   min-width: 0;
 }
 .form-dialog #book-title { font-family: var(--serif); font-size: 22px; }
-.form-dialog[data-mode="open"] .create-only { display: none; }
+.form-dialog:not([data-mode="create"]) .create-only { display: none; }
+.form-dialog[data-mode="open"] .not-open { display: none; }
 .path-row { display: flex; gap: 8px; }
 .path-row input { flex: 1; }
 #book-target { font-size: 14px; word-break: break-all; }

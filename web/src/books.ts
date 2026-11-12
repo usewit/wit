@@ -58,7 +58,9 @@ export async function initBooks(deps: Deps) {
   const author = $<HTMLInputElement>("book-author");
   const place = $<HTMLInputElement>("book-place");
   const target = $("book-target");
-  let mode: "open" | "create" = "open";
+  let mode: "open" | "create" | "copy" = "open";
+  /** The sample being copied (mode "copy"). */
+  let copying = { id: "", title: "" };
 
   for (const b of document.querySelectorAll<HTMLButtonElement>(".browse")) b.hidden = !app.native_picker;
 
@@ -68,23 +70,25 @@ export async function initBooks(deps: Deps) {
   }
 
   function updateTarget() {
-    const name = folderName(title.value);
-    target.textContent = mode === "create" && place.value.trim() && name
+    const name = folderName(mode === "copy" ? copying.title : title.value);
+    target.textContent = mode !== "open" && place.value.trim() && name
       ? `New folder: ${join(place.value.trim(), name)}`
       : "";
   }
 
-  function show(m: "open" | "create", path = "") {
+  function show(m: "open" | "create" | "copy", path = "") {
     mode = m;
     form.dataset.mode = m;
-    $("book-dialog-title").textContent = m === "open" ? "Open a folder" : "Start something new";
-    $("book-hint").textContent = m === "open"
-      ? "Type the path of a folder with the text (story.md, essay.md or a .fountain script), or of a single .md or .fountain file."
-      : "Wit makes a folder with the text and its settings. Screenplays and plays are written in Fountain: plain text that lays itself out as a script.";
+    $("book-dialog-title").textContent = { open: "Open a folder", create: "Start something new", copy: "Save your own copy" }[m];
+    $("book-hint").textContent = {
+      open: "Type the path of a folder with the text (story.md, essay.md or a .fountain script), or of a single .md or .fountain file.",
+      create: "Wit makes a folder with the text and its settings. Screenplays and plays are written in Fountain: plain text that lays itself out as a script.",
+      copy: `Wit copies “${copying.title}” into a folder of its own, with its pictures and settings. You edit the copy; the sample stays as it is.`,
+    }[m];
     $("book-place-label").firstChild!.textContent = m === "open" ? "Folder " : "Put it in ";
-    $<HTMLButtonElement>("book-ok").textContent = m === "open" ? "Open" : "Create";
+    $<HTMLButtonElement>("book-ok").textContent = { open: "Open", create: "Create", copy: "Save copy" }[m];
     if (m === "create") { title.value = ""; author.value = ""; }
-    place.value = path || (m === "create" ? app.default_parent ?? "" : "");
+    place.value = path || (m !== "open" ? app.default_parent ?? "" : "");
     showError(null);
     updateTarget();
     if (!dialog.open) dialog.showModal();
@@ -134,12 +138,15 @@ export async function initBooks(deps: Deps) {
     const parent = place.value.trim();
     if (mode === "create" && !folderName(title.value)) { title.focus(); return showError("Give it a title."); }
     if (!parent) return showError(mode === "open" ? "Type the folder's path." : "Choose where to put it.");
+    if (mode === "copy" && !folderName(copying.title)) copying.title = "Sample";
     showError(null);
     const ok = $<HTMLButtonElement>("book-ok");
     ok.disabled = true;
     try {
       const data = mode === "open"
         ? await post("/api/books/open", { dir: parent })
+        : mode === "copy"
+        ? await post(`/api/books/${encodeURIComponent(copying.id)}/copy`, { dir: join(parent, folderName(copying.title)) })
         : await post("/api/books/create", {
             dir: join(parent, folderName(title.value)),
             title: title.value,
@@ -155,5 +162,11 @@ export async function initBooks(deps: Deps) {
     }
   };
 
-  return { showOpen, showCreate: () => show("create") };
+  /** Copy a sample to a folder the writer chooses, then open the copy. */
+  function showCopy(id: string, sampleTitle: string) {
+    copying = { id, title: sampleTitle };
+    show("copy");
+  }
+
+  return { showOpen, showCreate: () => show("create"), showCopy };
 }

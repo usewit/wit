@@ -18,11 +18,12 @@ the server, so pages update a few milliseconds after you stop typing.
 From Windows (WSL2), open http://localhost:7700. You need Rust and Node. The
 `typst` CLI is not needed.
 
-The first time it runs, Wit opens six samples from `examples/`, all public
-domain: *Pride and Prejudice*, *A Christmas Carol*, *Alice's Adventures in
-Wonderland* with Tenniel's illustrations, Virginia Woolf's essay *A Room of
-One's Own*, Kafka's *Die Verwandlung* in German, and a short screenplay, *A
-Mad Tea-Party*. Open or create your own with Alt+O and Alt+N.
+Wit offers six samples from `examples/`, all public domain: *Pride and
+Prejudice*, *A Christmas Carol*, *Alice's Adventures in Wonderland* with
+Tenniel's illustrations, Virginia Woolf's essay *A Room of One's Own*, Kafka's
+*Die Verwandlung* in German, and a short screenplay, *A Mad Tea-Party*. They
+are read-only; **Save a copy…** puts an editable copy in a folder you choose.
+Open or create your own with Alt+O and Alt+N.
 
 Open documents are listed in `wit.json`, which is this computer's own list and
 is not committed. Each book is a directory with `story.md`, `book.yaml` and
@@ -192,6 +193,10 @@ outside margins and the 0.125 in bleed.
 
 ## Features
 
+- **Illustrations**: Insert illustration (Ctrl+M, ⇧⌘M on a Mac) lists the
+  pictures in the book's `images/` folder. **Add images…** there copies PNG
+  or JPG files into it; a name already taken by a different picture gets a
+  number (`map-2.png`).
 - **Auto-save** 0.8 s after you stop typing. If `story.md` changes on disk
   outside Wit, saving pauses and asks which version to keep. Unsaved text
   is also kept as a draft in the browser.

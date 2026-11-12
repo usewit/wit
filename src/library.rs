@@ -19,7 +19,12 @@ pub struct Library {
     workspace: PathBuf,
     /// In workspace order, so the book menu matches the file.
     books: RwLock<Vec<Slot>>,
+    /// The bundled samples, read-only: "Save a copy" makes an editable book.
+    samples: Vec<Slot>,
 }
+
+/// Sample ids start with this, so they never clash with the writer's books.
+pub const SAMPLE_PREFIX: &str = "sample-";
 
 #[derive(Clone)]
 pub struct Slot {
@@ -40,7 +45,7 @@ impl Slot {
 impl Library {
     /// Read the workspace file. A missing file is an empty library; it is
     /// created when the first book is added.
-    pub fn load(workspace: PathBuf) -> Result<Self> {
+    pub fn load(workspace: PathBuf, samples: Option<&Path>) -> Result<Self> {
         // The app was called Quire: carry its workspace file over once.
         let old = workspace.with_file_name("quire.json");
         if !workspace.exists() && old.is_file() {
@@ -62,22 +67,58 @@ impl Library {
             e.dir = e.dir.canonicalize().with_context(|| format!("book folder {}", e.dir.display()))?;
             books.push(Slot::new(e));
         }
-        Ok(Library { workspace, books: RwLock::new(books) })
+        let samples = match samples {
+            Some(dir) => load_samples(dir).unwrap_or_else(|e| {
+                tracing::warn!("samples in {}: {e:#}", dir.display());
+                vec![]
+            }),
+            None => vec![],
+        };
+        Ok(Library { workspace, books: RwLock::new(books), samples })
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<Mutex<Book>>> {
+        if let Some(s) = self.samples.iter().find(|s| s.id == id) {
+            return Some(s.book.clone());
+        }
         self.books.read().unwrap().iter().find(|s| s.id == id).map(|s| s.book.clone())
     }
 
+    pub fn is_sample(&self, id: &str) -> bool {
+        self.samples.iter().any(|s| s.id == id)
+    }
+
+    /// The writer's own books.
     pub fn list(&self) -> Vec<Slot> {
         self.books.read().unwrap().clone()
+    }
+
+    pub fn samples(&self) -> &[Slot] {
+        &self.samples
+    }
+
+    /// Copy a sample to `dir` (a new or empty folder) and add the copy as one
+    /// of the writer's books. Wit's own files (`.wit/`) are not copied.
+    pub fn copy_sample(&self, id: &str, dir: &Path) -> Result<String> {
+        let Some(sample) = self.samples.iter().find(|s| s.id == id) else {
+            bail!("There is no sample called {id}.");
+        };
+        if dir.exists() && std::fs::read_dir(dir)?.next().is_some() {
+            bail!("{} already exists and is not empty. Choose another place.", dir.display());
+        }
+        copy_tree(&sample.dir, dir).with_context(|| format!("copying the sample to {}", dir.display()))?;
+        self.add(dir, &sample.source)
     }
 
     /// Where "New book" suggests putting a book: next to the last one opened,
     /// or the Documents folder for the very first.
     pub fn default_parent(&self) -> Option<PathBuf> {
         let books = self.books.read().unwrap();
-        if let Some(last) = books.last() {
+        // Not next to samples copied into Wit's own config folder by older
+        // versions: that folder is hidden (inside the sandbox on a Mac).
+        let own = self.workspace.parent().and_then(|p| p.canonicalize().ok());
+        let last = books.iter().rev().find(|b| own.as_ref().is_none_or(|o| !b.dir.starts_with(o)));
+        if let Some(last) = last {
             return Some(strip_verbatim(last.dir.parent()?.to_path_buf()));
         }
         let home = PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?);
@@ -201,6 +242,43 @@ impl Library {
         std::fs::write(&self.workspace, serde_json::to_string_pretty(&ws)? + "\n")
             .with_context(|| format!("writing {}", self.workspace.display()))
     }
+}
+
+/// The samples listed in `<dir>/workspace.json`, with relative folders.
+fn load_samples(dir: &Path) -> Result<Vec<Slot>> {
+    let path = dir.join("workspace.json");
+    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let ws: Workspace = serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let base = dir.parent().unwrap_or(dir);
+    let mut out = vec![];
+    for mut e in ws.books {
+        // Folders are written relative to the repository ("examples/alice").
+        let rel = e.dir.clone();
+        let candidates = [base.join(&rel), dir.join(rel.file_name().unwrap_or_default())];
+        let Some(found) = candidates.into_iter().find(|p| p.is_dir()) else { continue };
+        e.dir = found.canonicalize()?;
+        e.id = format!("{SAMPLE_PREFIX}{}", e.id);
+        out.push(Slot::new(e));
+    }
+    Ok(out)
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == ".wit" || name == "workspace.json" {
+            continue;
+        }
+        let target = to.join(&name);
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 /// The text file a document folder is written in: one of the starter names,

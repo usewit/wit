@@ -94,6 +94,10 @@
             <span>Carry on with one you already have</span>
           </button>
         </div>
+        <div id="welcome-samples" class="welcome-samples" hidden>
+          <p class="hint">Or read a sample first, and save your own copy to edit it:</p>
+          <div id="welcome-sample-list"></div>
+        </div>
         <button id="welcome-theme" class="link-btn" type="button">Change theme</button>
       </div>
       <section class="welcome-keys" aria-labelledby="welcome-keys-title">
@@ -467,7 +471,7 @@
           <input id="book-place" type="text" spellcheck="false" autocomplete="off" />
           <button id="book-browse" type="button" class="browse">Browse…</button>
         </span></label>
-        <p id="book-target" class="hint create-only" aria-live="polite"></p>
+        <p id="book-target" class="hint not-open" aria-live="polite"></p>
         <p id="book-error" class="form-error" role="alert" hidden></p>
         <menu>
           <button id="book-cancel" type="button">Cancel</button>
@@ -479,8 +483,13 @@
     <dialog id="image-dialog">
       <form method="dialog">
         <h2>Insert illustration</h2>
-        <p class="hint">Images come from the book's <code>images/</code> folder.</p>
+        <p class="hint">Pictures in the book's <code>images/</code> folder. <strong>Add images…</strong> copies PNG or JPG files there.</p>
         <div id="image-list" class="image-list"></div>
+        <p class="image-add">
+          <button id="image-add" type="button">Add images…</button>
+          <input id="image-file" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple hidden />
+          <span id="image-add-status" class="hint" aria-live="polite"></span>
+        </p>
         <fieldset>
           <legend>Placement</legend>
           <label><input type="radio" name="placement" value="" checked /> Spot, 70% width</label>
