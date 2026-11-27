@@ -151,8 +151,10 @@ Screenplays print in the standard layout: Courier Prime 12 pt, 1.5 in left
 margin, characters at 3.7 in, dialogue at 2.5 in, page numbers top right from
 page 2, about a minute of screen time per page. A4 keeps the same measures.
 A `^` after a character's name (`STEEL ^`) prints their speech side by side
-with the one before it: dual dialogue, two people talking at once. Not yet:
-`(MORE)` / `(CONT'D)` when a speech crosses a page.
+with the one before it: dual dialogue, two people talking at once. A speech
+that crosses a page gets `(MORE)` under its last line there and the name again
+with `(CONT'D)` on the next page, in stage plays too; at least two lines stay
+on each side, and a parenthetical stays with the words after it.
 
 ## Fonts and page setups
 

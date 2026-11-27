@@ -313,23 +313,34 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
 }
 
 /// A character's cue and what they say, from the cue at line `i` to the next
-/// blank line. `col` lays it out as one column of dual dialogue. Returns the
-/// next line index.
+/// blank line. On its own it is one `#dialogue(line, [name])[…]` call, which
+/// the template can carry across a page with (MORE) and (CONT'D); `col` makes
+/// it one column of dual dialogue instead, as separate `#cue` and `#speech`
+/// calls. Returns the next line index.
 fn dialogue(lines: &[(usize, &str)], mut i: usize, col: bool, out: &mut String) -> usize {
     let m = |i: usize| format!("#metadata({})<q>", i + 1);
     let t = lines[i].1.trim();
     let name = t.trim_start_matches('@').trim_end_matches('^').trim();
     // A forced name prints as written ("McCLANE"); others in capitals.
-    let mut args = vec![];
-    if t.starts_with('@') {
-        args.push("forced: true");
-    }
-    if col {
-        args.push("col: true");
-    }
-    let args = if args.is_empty() { String::new() } else { format!("({})", args.join(", ")) };
+    let forced = if t.starts_with('@') { ", forced: true" } else { "" };
     let c = if col { "(col: true)" } else { "" };
-    out.push_str(&format!("#cue{args}[{}{}]\n", m(i), inline(name)));
+    if col {
+        let args = if forced.is_empty() { "(col: true)".to_string() } else { "(forced: true, col: true)".to_string() };
+        out.push_str(&format!("#cue{args}[{}{}]\n", m(i), inline(name)));
+    } else {
+        // A name already written with (CONT'D) doesn't get a second one.
+        let upper = name.to_uppercase().replace('’', "'");
+        let contd = if upper.contains("(CONT'D)") || upper.contains("(CONT.)") { ", contd: true" } else { "" };
+        // A speech that is one paragraph and nothing else says how long it
+        // is: the template keeps the short ones together without measuring.
+        let len = match lines.get(i + 1).map(|(_, l)| l.trim()) {
+            Some(l) if lines.get(i + 2).is_none_or(|(_, n)| n.trim().is_empty() && n.len() < 2) && !(l.starts_with('(') && l.ends_with(')')) => {
+                format!(", len: {}", l.chars().count())
+            }
+            _ => String::new(),
+        };
+        out.push_str(&format!("#dialogue({}, [{}]{forced}{contd}{len})[\n", i + 1, inline(name)));
+    }
     i += 1;
     // Dialogue runs to the next blank line; a line of just spaces keeps it going.
     let mut speech: Vec<String> = vec![];
@@ -357,6 +368,9 @@ fn dialogue(lines: &[(usize, &str)], mut i: usize, col: bool, out: &mut String) 
         i += 1;
     }
     flush(&mut speech, out);
+    if !col {
+        out.push_str("]\n");
+    }
     i
 }
 
@@ -401,9 +415,10 @@ mod tests {
         assert!(out.contains("#titlepage(title: [Big Fish], credit: none, author: [John August]"), "{out}");
         assert!(out.contains("#scene([#metadata(4)<q>EXT. FOREST \\- DAY], num: none)"), "{out}");
         assert!(out.contains("#action[#metadata(6)<q>Nori runs. \\\n#metadata(7)<q>She stops.]"), "{out}");
-        assert!(out.contains("#cue[#metadata(9)<q>NORI (V.O.)]"), "{out}");
-        assert!(out.contains("#paren[#metadata(10)<q>(whispering)]"), "{out}");
-        assert!(out.contains("#speech[#metadata(11)<q>Do you hear #emph[that]?]"), "{out}");
+        assert!(
+            out.contains("#dialogue(9, [NORI (V.O.)])[\n#paren[#metadata(10)<q>(whispering)]\n#speech[#metadata(11)<q>Do you hear #emph[that]?]\n]\n\n"),
+            "{out}"
+        );
         assert!(out.contains("#transition[#metadata(13)<q>CUT TO:]"), "{out}");
         assert!(out.contains("#centered[#metadata(15)<q>THE END]"), "{out}");
     }
@@ -412,7 +427,7 @@ mod tests {
     fn forced_elements_notes_and_numbers() {
         let out = t(".flashback #3#\n\n@McCLANE\nYippee [[a note]] ki-yay.\n\n!LOUD NOISES\n\n===\n");
         assert!(out.contains("#scene([#metadata(1)<q>flashback], num: [3])"), "{out}");
-        assert!(out.contains("#cue(forced: true)[#metadata(3)<q>McCLANE]"), "{out}");
+        assert!(out.contains("#dialogue(3, [McCLANE], forced: true, len: "), "{out}");
         assert!(out.contains("Yippee ki\\-yay."), "{out}");
         assert!(out.contains("#action[#metadata(6)<q>LOUD NOISES]"), "{out}");
         assert!(out.contains("#pagebreak(weak: true)"), "{out}");
@@ -505,10 +520,40 @@ mod tests {
     fn caret_without_dialogue_before_is_a_plain_cue() {
         let out = t("\nThey sit.\n\n@McCLANE ^\nHi.\n");
         assert!(!out.contains("#dual"), "{out}");
-        assert!(out.contains("#cue(forced: true)[#metadata(4)<q>McCLANE]"), "{out}");
+        assert!(out.contains("#dialogue(4, [McCLANE], forced: true, len: 3)[\n#speech[#metadata(5)<q>Hi.]\n]\n"), "{out}");
         // Only the speech right before pairs up; a third ^ starts no new pair.
         let out = t("A\nOne.\n\nB ^\nTwo.\n\nC ^\nThree.\n");
         assert_eq!(out.matches("#dual").count(), 1, "{out}");
-        assert!(out.contains("#cue[#metadata(7)<q>C]"), "{out}");
+        assert!(out.contains("#dialogue(7, [C], len: 6)["), "{out}");
+    }
+
+    #[test]
+    fn dialogue_is_one_call_the_template_can_carry_over_a_page() {
+        // Name, parentheticals and speech travel together, in order.
+        let c = convert("\nNORI\nOne.\nTwo.\n(beat)\n~La la\n\nShe waits.\n", Kind::Screenplay);
+        let out = &c.typst;
+        assert!(
+            out.contains(
+                "#dialogue(2, [NORI])[\n#speech[#metadata(3)<q>One. \\\n#metadata(4)<q>Two.]\n#paren[#metadata(5)<q>(beat)]\n\
+                 #speech[#metadata(6)<q>#emph[La la]]\n]\n\n#action[#metadata(8)<q>She waits.]"
+            ),
+            "{out}"
+        );
+        // The name's own line marker is left to the template: it prints the
+        // name again on the next page, and the marker must not come twice.
+        assert!(!out.contains("#metadata(2)<q>"), "{out}");
+        assert!(c.map.windows(2).all(|w| w[0].0 <= w[1].0), "{:?}", c.map);
+        assert_eq!(c.map.iter().find(|(t, _)| *t == out.find("#dialogue(2").unwrap()).map(|m| m.1), Some(1));
+        // A name the writer already marked (CONT'D) is not marked again.
+        for name in ["NORI (CONT'D)", "NORI (cont’d)", "@Nori (V.O.) (CONT'D)"] {
+            assert!(t(&format!("\n{name}\nHi.\n")).contains("contd: true, len: 3)["), "{name}");
+        }
+        assert!(!t("\nNORI (V.O.)\nHi.\n").contains("contd"));
+        // Only a speech of one paragraph says how long it is.
+        assert!(t("\nNORI\nDo you hear that?\n").contains("#dialogue(2, [NORI], len: 17)["));
+        assert!(!t("\nNORI\n(low)\nHi.\n").contains("len:"));
+        assert!(!t("\nNORI\n(low)\n").contains("len:"));
+        // Dual dialogue is never split: no #dialogue inside #dual.
+        assert!(!t("A\nOne.\n\nB ^\nTwo.\n").contains("#dialogue"));
     }
 }

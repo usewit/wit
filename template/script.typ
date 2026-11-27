@@ -83,18 +83,80 @@
 #let action(body) = block(above: gap, below: gap, width: 100%)[
   #if play { pad(left: 2in, emph(body)) } else { body }
 ]
-// A character's name stays with the first words they say. A forced name
-// ("@McCLANE") prints as written. `col: true` is one column of dual dialogue.
+// Dialogue. A forced name ("@McCLANE") prints as written.
+#let cue-name(body, forced) = if forced { body } else { upper(body) }
+// The parts of one column of dual dialogue (`col: true`), and the
+// parentheticals and speech inside `dialogue`.
 #let cue(body, forced: false, col: false) = block(above: gap, below: 0pt, sticky: true, width: 100%)[
-  #let name = if forced { body } else { upper(body) }
+  #let name = cue-name(body, forced)
   #if play or col { align(center, name) } else { pad(left: 2.2in, name) }
 ]
 #let paren(body, col: false) = block(above: 0pt, below: 0pt, sticky: true, width: 100%)[
   #if col { pad(left: 0.4in, right: 0.4in, if play { emph(body) } else { body }) } else if play { pad(left: 1in, right: 1in, emph(body)) } else { pad(left: 1.6in, block(width: 2in, body)) }
 ]
-#let speech(body, col: false) = block(above: 0pt, below: gap, width: 100%)[
+#let speech(body, col: false) = block(above: 0pt, below: 0pt, width: 100%)[
   #if play or col { body } else { pad(left: 1in, block(width: 3.5in, body)) }
 ]
+// A character's name and everything they say until the next blank line. `n`
+// is the name's line in the script. The name stays with the first two lines
+// of speech. When the speech crosses a page, (MORE) prints under its last
+// line on that page and the name comes again with (CONT'D) on the next; at
+// least two lines of a speech stay on each side, and a parenthetical stays
+// with the words after it. `contd`: the name as written already ends in
+// (CONT'D).
+//
+// How: a one-column grid whose header (the name) and footer repeat on every
+// page the speech runs to. Both always take one line, so the pages come out
+// the same whatever they print; each then looks up which page it is on. The
+// header on a later page adds (CONT'D). The footer after the last words is
+// the blank line under the speech; the others print (MORE), moved up under
+// the last line of speech on their page when lines were held back for the
+// next one.
+#let dialogue(n, name, body, forced: false, contd: false, len: none) = {
+  let name = cue-name(name, forced)
+  let head = label("wit-cue-" + str(n))
+  let said = label("wit-said-" + str(n))
+  let at(body) = if play { align(center, body) } else { pad(left: 2.2in, body) }
+  // Up to three lines can't be split (two stay on each side), so a speech
+  // that short is simply kept together: most are, and it is much the quickest
+  // to lay out. `len` is how many characters a one-paragraph speech has; in
+  // typewriter type a character is 0.6em wide.
+  let per-line = (if play { measure } else { 3.5in }) / (0.6 * size)
+  if len != none and len <= 2.5 * per-line {
+    block(above: gap, below: gap, width: 100%, breakable: false, at[#metadata(n)<q>#name] + body)
+  } else {
+    block(above: gap, below: gap, width: 100%, {
+      grid(
+        columns: 1fr,
+        grid.header(repeat: true, context {
+          let pages = query(head).map(m => m.location().page())
+          [#metadata(none)#head]
+          // The source-line marker goes with the first name only.
+          at(if pages.len() == 0 or here().page() == calc.min(..pages) [#metadata(n)<q>#name] else if contd { name } else [#name (CONT'D)])
+        }),
+        {
+          // An invisible mark on every line said, for the footer to find.
+          set par.line(numbering: _ => [#metadata(none)#said], number-clearance: 0pt)
+          body
+        },
+        grid.footer(repeat: true, context {
+          let pages = query(head).map(m => m.location().page())
+          let me = here().position()
+          if pages.len() == 0 or me.page == calc.max(..pages) {
+            v(line)
+          } else {
+            // Marks sit on the baseline, 0.2em above the bottom of their line.
+            let ys = query(said).map(m => m.location().position()).filter(p => p.page == me.page).map(p => p.y)
+            let up = if ys.len() == 0 { 0pt } else { calc.max(0pt, me.y - calc.max(..ys) - 0.2 * size) }
+            at(move(dy: -up, [(MORE)]))
+          }
+        }),
+      )
+      // The footer's blank line is the gap below.
+      v(-gap)
+    })
+  }
+}
 // Dual dialogue: two characters speaking at once, side by side across the
 // line, kept on one page.
 #let dual(first, second) = block(above: gap, below: gap, breakable: false, width: 100%,
