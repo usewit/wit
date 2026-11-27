@@ -53,6 +53,46 @@ jobs:
           cp -r examples portable/Wit/examples
           (cd portable && 7z a -tzip "../target/release/bundle/Wit_${version}_x64-portable.zip" Wit > /dev/null)
 
+      # The Microsoft Store package: the same folder as the portable zip,
+      # plus desktop/msix (manifest and tiles). Unsigned, because the Store
+      # signs what it publishes, so it can't be installed from the release.
+      # It goes in its own artifact, which the Release workflow leaves out.
+      # The identity comes from repository variables (Partner Center → the
+      # app → Product identity); without them it builds with stand-in values
+      # that the Store would refuse.
+      - name: Build the Store package (MSIX)
+        shell: bash
+        env:
+          IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME || 'Usewit.Wit' }}
+          PUBLISHER: ${{ vars.MSSTORE_PUBLISHER || 'CN=00000000-0000-0000-0000-000000000000' }}
+          PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME || 'Cosmin Stefaniga' }}
+          DISPLAY_NAME: ${{ vars.MSSTORE_DISPLAY_NAME || 'Wit Writer' }}
+        run: |
+          version=$(jq -r .version desktop/tauri.conf.json)
+          # MSIX wants four numbers, and the Store wants the last one 0.
+          export VERSION="${version}.0"
+          pkg=msix/Wit
+          mkdir -p msix
+          cp -r portable/Wit "$pkg"
+          cp -r desktop/msix/Assets "$pkg/Assets"
+          python - <<'EOF'
+          import os
+          src = open("desktop/msix/AppxManifest.xml", encoding="utf-8").read()
+          for key in ["IDENTITY_NAME", "PUBLISHER", "PUBLISHER_DISPLAY_NAME", "DISPLAY_NAME", "VERSION"]:
+              src = src.replace("{{" + key + "}}", os.environ[key])
+          assert "{{" not in src, "unfilled value in AppxManifest.xml"
+          open("msix/Wit/AppxManifest.xml", "w", encoding="utf-8").write(src)
+          EOF
+          makeappx=$(ls -d "/c/Program Files (x86)/Windows Kits/10/bin/"10.*/x64/makeappx.exe | sort -V | tail -1)
+          echo "Using $makeappx"
+          "$makeappx" pack -o -d "$pkg" -p "target/release/bundle/Wit_${version}_x64.msix"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Store-MSIX
+          path: target/release/bundle/*.msix
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: Wit-Windows

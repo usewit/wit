@@ -44,6 +44,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          # Wit-Windows, Wit-Linux, Wit-macOS; not Store-MSIX (unsigned, for
+          # Partner Center only).
+          pattern: Wit-*
           merge-multiple: true
 
       - name: Draft the release
