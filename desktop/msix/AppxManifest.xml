@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   MSIX package for the Microsoft Store. The Windows workflow fills in the
-  {{...}} values: the version from tauri.conf.json and the identity from the
+  placeholder values in double braces: the version from tauri.conf.json and the identity from the
   repository variables MSSTORE_IDENTITY_NAME, MSSTORE_PUBLISHER,
   MSSTORE_PUBLISHER_DISPLAY_NAME and MSSTORE_DISPLAY_NAME, copied from
   Partner Center (the app → Product identity). The Store signs the package,
