@@ -84,17 +84,21 @@
   #if play { pad(left: 2in, emph(body)) } else { body }
 ]
 // A character's name stays with the first words they say. A forced name
-// ("@McCLANE") prints as written.
-#let cue(body, forced: false) = block(above: gap, below: 0pt, sticky: true, width: 100%)[
+// ("@McCLANE") prints as written. `col: true` is one column of dual dialogue.
+#let cue(body, forced: false, col: false) = block(above: gap, below: 0pt, sticky: true, width: 100%)[
   #let name = if forced { body } else { upper(body) }
-  #if play { align(center, name) } else { pad(left: 2.2in, name) }
+  #if play or col { align(center, name) } else { pad(left: 2.2in, name) }
 ]
-#let paren(body) = block(above: 0pt, below: 0pt, sticky: true, width: 100%)[
-  #if play { pad(left: 1in, right: 1in, emph(body)) } else { pad(left: 1.6in, block(width: 2in, body)) }
+#let paren(body, col: false) = block(above: 0pt, below: 0pt, sticky: true, width: 100%)[
+  #if col { pad(left: 0.4in, right: 0.4in, if play { emph(body) } else { body }) } else if play { pad(left: 1in, right: 1in, emph(body)) } else { pad(left: 1.6in, block(width: 2in, body)) }
 ]
-#let speech(body) = block(above: 0pt, below: gap, width: 100%)[
-  #if play { body } else { pad(left: 1in, block(width: 3.5in, body)) }
+#let speech(body, col: false) = block(above: 0pt, below: gap, width: 100%)[
+  #if play or col { body } else { pad(left: 1in, block(width: 3.5in, body)) }
 ]
+// Dual dialogue: two characters speaking at once, side by side across the
+// line, kept on one page.
+#let dual(first, second) = block(above: gap, below: gap, breakable: false, width: 100%,
+  grid(columns: (1fr, 1fr), column-gutter: 0.3in, first, second))
 #let transition(body) = block(above: gap, below: gap, width: 100%, align(right, upper(body)))
 #let centered(body) = block(above: gap, below: gap, width: 100%, align(center, body))
 #let lyric(body) = block(above: gap, below: gap, width: 100%, pad(left: if play { 0in } else { 1in }, emph(body)))

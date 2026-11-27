@@ -207,6 +207,8 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
     }
 
     let blank = |i: usize| lines.get(i).is_none_or(|(_, l)| l.trim().is_empty());
+    // The last dialogue block: where it starts and ends in `out`, and its cue's line.
+    let mut last_dialogue: Option<(usize, usize, usize)> = None;
     let mut i = start;
     while i < lines.len() {
         let (at, raw) = lines[i];
@@ -281,44 +283,81 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
         }
         let forced_cue = t.starts_with('@');
         if forced_cue || (prev_blank && !next_blank && is_cue(t)) {
-            let name = t.trim_start_matches('@').trim_end_matches('^').trim();
-            // A forced name prints as written ("McCLANE"); others in capitals.
-            let forced = if forced_cue { "(forced: true)" } else { "" };
-            out.push_str(&format!("#cue{forced}[{mark}{}]\n", inline(name)));
-            i += 1;
-            // Dialogue runs to the next blank line; a line of just spaces keeps it going.
-            let mut speech: Vec<String> = vec![];
-            let flush = |speech: &mut Vec<String>, out: &mut String| {
-                if !speech.is_empty() {
-                    out.push_str(&format!("#speech[{}]\n", speech.join(" \\\n")));
-                    speech.clear();
+            // `^` after a name: this speech and the one before it are spoken
+            // at the same time and print side by side.
+            match last_dialogue.filter(|&(_, end, _)| end == out.len() && t.ends_with('^')) {
+                Some((start, _, first)) => {
+                    out.truncate(start);
+                    map.retain(|&(o, _)| o < start);
+                    out.push_str("#dual[\n");
+                    map.push((out.len(), lines[first].0));
+                    dialogue(&lines, first, true, &mut out);
+                    out.push_str("][\n");
+                    map.push((out.len(), at));
+                    i = dialogue(&lines, i, true, &mut out);
+                    out.push_str("]\n\n");
+                    last_dialogue = None;
                 }
-            };
-            while i < lines.len() {
-                let (_, l) = lines[i];
-                if l.trim().is_empty() && l.len() < 2 {
-                    break;
+                None => {
+                    let (start, cue_line) = (out.len(), i);
+                    i = dialogue(&lines, i, false, &mut out);
+                    out.push('\n');
+                    last_dialogue = Some((start, out.len(), cue_line));
                 }
-                let lt = l.trim();
-                let m = format!("#metadata({})<q>", line_no(i));
-                if lt.starts_with('(') && lt.ends_with(')') {
-                    flush(&mut speech, &mut out);
-                    out.push_str(&format!("#paren[{m}{}]\n", inline(lt)));
-                } else if let Some(sung) = lt.strip_prefix('~') {
-                    // A sung line: in italics, where the dialogue goes.
-                    speech.push(format!("{m}#emph[{}]", inline(sung.trim())));
-                } else {
-                    speech.push(format!("{m}{}", inline(lt)));
-                }
-                i += 1;
             }
-            flush(&mut speech, &mut out);
-            out.push('\n');
             continue;
         }
         i = action(&lines, i, t, &mark, &mut out, Some(src));
     }
     Converted { typst: out, map }
+}
+
+/// A character's cue and what they say, from the cue at line `i` to the next
+/// blank line. `col` lays it out as one column of dual dialogue. Returns the
+/// next line index.
+fn dialogue(lines: &[(usize, &str)], mut i: usize, col: bool, out: &mut String) -> usize {
+    let m = |i: usize| format!("#metadata({})<q>", i + 1);
+    let t = lines[i].1.trim();
+    let name = t.trim_start_matches('@').trim_end_matches('^').trim();
+    // A forced name prints as written ("McCLANE"); others in capitals.
+    let mut args = vec![];
+    if t.starts_with('@') {
+        args.push("forced: true");
+    }
+    if col {
+        args.push("col: true");
+    }
+    let args = if args.is_empty() { String::new() } else { format!("({})", args.join(", ")) };
+    let c = if col { "(col: true)" } else { "" };
+    out.push_str(&format!("#cue{args}[{}{}]\n", m(i), inline(name)));
+    i += 1;
+    // Dialogue runs to the next blank line; a line of just spaces keeps it going.
+    let mut speech: Vec<String> = vec![];
+    let flush = |speech: &mut Vec<String>, out: &mut String| {
+        if !speech.is_empty() {
+            out.push_str(&format!("#speech{c}[{}]\n", speech.join(" \\\n")));
+            speech.clear();
+        }
+    };
+    while i < lines.len() {
+        let (_, l) = lines[i];
+        if l.trim().is_empty() && l.len() < 2 {
+            break;
+        }
+        let lt = l.trim();
+        if lt.starts_with('(') && lt.ends_with(')') {
+            flush(&mut speech, out);
+            out.push_str(&format!("#paren{c}[{}{}]\n", m(i), inline(lt)));
+        } else if let Some(sung) = lt.strip_prefix('~') {
+            // A sung line: in italics, where the dialogue goes.
+            speech.push(format!("{}#emph[{}]", m(i), inline(sung.trim())));
+        } else {
+            speech.push(format!("{}{}", m(i), inline(lt)));
+        }
+        i += 1;
+    }
+    flush(&mut speech, out);
+    i
 }
 
 /// Action: consecutive lines, each line break kept, and the spaces or tabs a
@@ -443,5 +482,33 @@ mod tests {
         let out = t("\nShe waits.\nNothing.\n");
         assert!(out.contains("#action["), "{out}");
         assert!(!out.contains("#cue"));
+    }
+
+    #[test]
+    fn dual_dialogue_side_by_side() {
+        let c = convert("BRICK\nScrew retirement.\n\nSTEEL ^\n(at once)\nScrew retirement.\n\nThey grin.\n", Kind::Screenplay);
+        let out = &c.typst;
+        assert!(out.contains(
+            "#dual[\n#cue(col: true)[#metadata(1)<q>BRICK]\n#speech(col: true)[#metadata(2)<q>Screw retirement.]\n][\n\
+             #cue(col: true)[#metadata(4)<q>STEEL]\n#paren(col: true)[#metadata(5)<q>(at once)]\n#speech(col: true)[#metadata(6)<q>Screw retirement.]\n]\n\n\
+             #action[#metadata(8)<q>They grin.]"
+        ), "{out}");
+        assert!(!out.contains('^'), "{out}");
+        // The source map still runs in order and points at both cues.
+        assert!(c.map.windows(2).all(|w| w[0].0 <= w[1].0), "{:?}", c.map);
+        let at = |o: &str| c.map.iter().find(|(t, _)| *t == out.find(o).unwrap()).map(|m| m.1);
+        assert_eq!(at("#cue(col: true)[#metadata(1)"), Some(0));
+        assert_eq!(at("#cue(col: true)[#metadata(4)"), Some(25));
+    }
+
+    #[test]
+    fn caret_without_dialogue_before_is_a_plain_cue() {
+        let out = t("\nThey sit.\n\n@McCLANE ^\nHi.\n");
+        assert!(!out.contains("#dual"), "{out}");
+        assert!(out.contains("#cue(forced: true)[#metadata(4)<q>McCLANE]"), "{out}");
+        // Only the speech right before pairs up; a third ^ starts no new pair.
+        let out = t("A\nOne.\n\nB ^\nTwo.\n\nC ^\nThree.\n");
+        assert_eq!(out.matches("#dual").count(), 1, "{out}");
+        assert!(out.contains("#cue[#metadata(7)<q>C]"), "{out}");
     }
 }
