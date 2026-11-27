@@ -166,8 +166,10 @@ fn title_page(lines: &[(usize, &str)]) -> (Vec<(String, Vec<String>)>, usize) {
     (fields, i)
 }
 
-/// Convert a Fountain script. Every element starts with a `#metadata(line)<q>`
-/// marker, like the Markdown converter, so pages map back to lines.
+/// Convert a Fountain script: the title page, then `#script((…))` with the
+/// script's parts in order, so the template can keep count of the lines on a
+/// page as it sets them. Every part starts with a `#metadata(line)<q>` marker,
+/// like the Markdown converter, so pages map back to lines.
 pub fn convert(src: &str, kind: Kind) -> Converted {
     let clean = strip_hidden(src);
     let mut lines: Vec<(usize, &str)> = vec![];
@@ -194,7 +196,7 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
             if vals.is_empty() { "none".into() } else { format!("[{}]", vals.join("#linebreak()")) }
         };
         out.push_str(&format!(
-            "#titlepage(title: {}, credit: {}, author: {}, source: {}, draft: {}, contact: {})\n\n",
+            "#titlepage(title: {}, credit: {}, author: {}, source: {}, draft: {}, contact: {})\n\n#script((\n",
             get(&["title"]),
             get(&["credit"]),
             get(&["author", "authors"]),
@@ -203,7 +205,7 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
             get(&["contact", "copyright"]),
         ));
     } else {
-        out.push_str("#titlepage()\n\n");
+        out.push_str("#titlepage()\n\n#script((\n");
     }
 
     let blank = |i: usize| lines.get(i).is_none_or(|(_, l)| l.trim().is_empty());
@@ -223,7 +225,7 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
         let next_blank = blank(i + 1);
 
         if t.len() >= 3 && t.chars().all(|c| c == '=') {
-            out.push_str("#pagebreak(weak: true)\n\n");
+            out.push_str("newpage,\n\n");
             i += 1;
             continue;
         }
@@ -231,7 +233,7 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
             if kind == Kind::Play {
                 let depth = 1 + rest.chars().take_while(|&c| c == '#').count();
                 let title = rest.trim_start_matches('#').trim();
-                out.push_str(&format!("#section({depth}, [{mark}{}])\n\n", inline(title)));
+                out.push_str(&format!("section({depth}, [{mark}{}]),\n\n", inline(title)));
             }
             i += 1;
             continue;
@@ -252,22 +254,22 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
                 Some((h, n)) if !n.contains(' ') => (h.trim(), format!("[{}]", script_escape(n))),
                 _ => (text.trim(), "none".to_string()),
             };
-            out.push_str(&format!("#scene([{mark}{}], num: {num})\n\n", inline(heading)));
+            out.push_str(&format!("scene([{mark}{}], num: {num}),\n\n", inline(heading)));
             i += 1;
             continue;
         }
         if t.starts_with('>') && t.ends_with('<') && t.len() > 1 {
-            out.push_str(&format!("#centered[{mark}{}]\n\n", inline(t[1..t.len() - 1].trim())));
+            out.push_str(&format!("centered[{mark}{}],\n\n", inline(t[1..t.len() - 1].trim())));
             i += 1;
             continue;
         }
         if let Some(rest) = t.strip_prefix('>') {
-            out.push_str(&format!("#transition[{mark}{}]\n\n", inline(rest.trim())));
+            out.push_str(&format!("transition[{mark}{}],\n\n", inline(rest.trim())));
             i += 1;
             continue;
         }
         if prev_blank && next_blank && is_transition(t) {
-            out.push_str(&format!("#transition[{mark}{}]\n\n", inline(t)));
+            out.push_str(&format!("transition[{mark}{}],\n\n", inline(t)));
             i += 1;
             continue;
         }
@@ -278,7 +280,7 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
                 parts.push(format!("#metadata({})<q>{}", line_no(i), inline(rest.trim())));
                 i += 1;
             }
-            out.push_str(&format!("#lyric[{}]\n\n", parts.join(" \\\n")));
+            out.push_str(&format!("lyric[{}],\n\n", parts.join(" \\\n")));
             continue;
         }
         let forced_cue = t.starts_with('@');
@@ -289,18 +291,17 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
                 Some((start, _, first)) => {
                     out.truncate(start);
                     map.retain(|&(o, _)| o < start);
-                    out.push_str("#dual[\n");
+                    out.push_str("dual(\n");
                     map.push((out.len(), lines[first].0));
-                    dialogue(&lines, first, true, &mut out);
-                    out.push_str("][\n");
+                    dialogue(&lines, first, &mut out);
                     map.push((out.len(), at));
-                    i = dialogue(&lines, i, true, &mut out);
-                    out.push_str("]\n\n");
+                    i = dialogue(&lines, i, &mut out);
+                    out.push_str("),\n\n");
                     last_dialogue = None;
                 }
                 None => {
                     let (start, cue_line) = (out.len(), i);
-                    i = dialogue(&lines, i, false, &mut out);
+                    i = dialogue(&lines, i, &mut out);
                     out.push('\n');
                     last_dialogue = Some((start, out.len(), cue_line));
                 }
@@ -309,44 +310,36 @@ pub fn convert(src: &str, kind: Kind) -> Converted {
         }
         i = action(&lines, i, t, &mark, &mut out, Some(src));
     }
+    out.push_str("))\n");
     Converted { typst: out, map }
 }
 
 /// A character's cue and what they say, from the cue at line `i` to the next
-/// blank line. On its own it is one `#dialogue(line, [name])[…]` call, which
-/// the template can carry across a page with (MORE) and (CONT'D); `col` makes
-/// it one column of dual dialogue instead, as separate `#cue` and `#speech`
-/// calls. Returns the next line index.
-fn dialogue(lines: &[(usize, &str)], mut i: usize, col: bool, out: &mut String) -> usize {
+/// blank line, as one `dialogue(line, [name], (…)),` call: the parentheticals
+/// and paragraphs in order, each paragraph as its lines and each line as its
+/// sentences, so the template can carry a speech across a page at the end of
+/// a sentence. Returns the next line index.
+fn dialogue(lines: &[(usize, &str)], mut i: usize, out: &mut String) -> usize {
     let m = |i: usize| format!("#metadata({})<q>", i + 1);
     let t = lines[i].1.trim();
     let name = t.trim_start_matches('@').trim_end_matches('^').trim();
-    // A forced name prints as written ("McCLANE"); others in capitals.
-    let forced = if t.starts_with('@') { ", forced: true" } else { "" };
-    let c = if col { "(col: true)" } else { "" };
-    if col {
-        let args = if forced.is_empty() { "(col: true)".to_string() } else { "(forced: true, col: true)".to_string() };
-        out.push_str(&format!("#cue{args}[{}{}]\n", m(i), inline(name)));
-    } else {
-        // A name already written with (CONT'D) doesn't get a second one.
-        let upper = name.to_uppercase().replace('’', "'");
-        let contd = if upper.contains("(CONT'D)") || upper.contains("(CONT.)") { ", contd: true" } else { "" };
-        // A speech that is one paragraph and nothing else says how long it
-        // is: the template keeps the short ones together without measuring.
-        let len = match lines.get(i + 1).map(|(_, l)| l.trim()) {
-            Some(l) if lines.get(i + 2).is_none_or(|(_, n)| n.trim().is_empty() && n.len() < 2) && !(l.starts_with('(') && l.ends_with(')')) => {
-                format!(", len: {}", l.chars().count())
-            }
-            _ => String::new(),
-        };
-        out.push_str(&format!("#dialogue({}, [{}]{forced}{contd}{len})[\n", i + 1, inline(name)));
-    }
+    // A name already written as continuing isn't marked a second time.
+    let upper = name.to_uppercase().replace('’', "'");
+    let contd = ["(CONT'D)", "(CONT.)", "(CONTINUING)"].iter().any(|x| upper.contains(x));
+    out.push_str(&format!(
+        "dialogue({}, [{}],{}{} (\n",
+        i + 1,
+        inline(name),
+        // A forced name prints as written ("McCLANE"); others in capitals.
+        if t.starts_with('@') { " forced: true," } else { "" },
+        if contd { " contd: true," } else { "" }
+    ));
     i += 1;
     // Dialogue runs to the next blank line; a line of just spaces keeps it going.
     let mut speech: Vec<String> = vec![];
     let flush = |speech: &mut Vec<String>, out: &mut String| {
         if !speech.is_empty() {
-            out.push_str(&format!("#speech{c}[{}]\n", speech.join(" \\\n")));
+            out.push_str(&format!("(say: ({},)),\n", speech.join(", ")));
             speech.clear();
         }
     };
@@ -358,20 +351,79 @@ fn dialogue(lines: &[(usize, &str)], mut i: usize, col: bool, out: &mut String) 
         let lt = l.trim();
         if lt.starts_with('(') && lt.ends_with(')') {
             flush(&mut speech, out);
-            out.push_str(&format!("#paren{c}[{}{}]\n", m(i), inline(lt)));
-        } else if let Some(sung) = lt.strip_prefix('~') {
-            // A sung line: in italics, where the dialogue goes.
-            speech.push(format!("{}#emph[{}]", m(i), inline(sung.trim())));
+            out.push_str(&format!("(paren: [{}{}]),\n", m(i), inline(lt)));
         } else {
-            speech.push(format!("{}{}", m(i), inline(lt)));
+            // A sung line (`~`) is in italics, where the dialogue goes.
+            let mut text = match lt.strip_prefix('~') {
+                Some(sung) => vec![format!("#emph[{}]", inline(sung.trim()))],
+                None => sentences(&inline(lt)),
+            };
+            if text.is_empty() {
+                text.push(String::new());
+            }
+            let parts: Vec<String> = text.iter().enumerate().map(|(k, x)| format!("[{}{x}]", if k == 0 { m(i) } else { String::new() })).collect();
+            speech.push(format!("({},)", parts.join(", ")));
         }
         i += 1;
     }
     flush(&mut speech, out);
-    if !col {
-        out.push_str("]\n");
-    }
+    out.push_str(")),\n");
     i
+}
+
+/// A line of dialogue, already Typst markup, as its sentences. A sentence
+/// ends with `.`, `?`, `!` or `…` (and any closing quotes, brackets or dashes
+/// after it) before a space, when what follows doesn't start in lower case
+/// and the full stop isn't an initial's or a title's ("J. Smith", "Mr. Fox").
+/// Nothing inside emphasis is split.
+fn sentences(markup: &str) -> Vec<String> {
+    const TITLES: &[&str] = &["mr", "mrs", "ms", "dr", "st", "prof", "sr", "jr", "vs", "mt", "lt", "col", "gen", "sgt", "capt", "rev"];
+    let chars: Vec<(usize, char)> = markup.char_indices().collect();
+    let mut out = vec![];
+    let (mut start, mut depth, mut k) = (0, 0usize, 0);
+    while k < chars.len() {
+        let (at, ch) = chars[k];
+        k += 1;
+        match ch {
+            '\\' => k += 1,
+            '[' => depth += 1,
+            ']' => depth = depth.saturating_sub(1),
+            '.' | '?' | '!' | '…' => {
+                // The rest of the stop ("?!", "...") and what closes after
+                // it, the emphasis it is in too.
+                let (mut end, mut open) = (k, depth);
+                while let Some(&(_, c)) = chars.get(end) {
+                    match c {
+                        '.' | '?' | '!' | '…' | '"' | '\'' | '”' | '’' | '»' | ')' | '—' | '–' => end += 1,
+                        ']' if open > 0 => {
+                            open -= 1;
+                            end += 1;
+                        }
+                        '\\' if matches!(chars.get(end + 1), Some((_, '-' | ']'))) => end += 2,
+                        _ => break,
+                    }
+                }
+                let next = chars.get(end + 1).map(|x| x.1);
+                if open > 0 || chars.get(end).map(|x| x.1) != Some(' ') || next.is_none_or(char::is_lowercase) {
+                    continue;
+                }
+                let word = markup[start..at].rsplit(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+                let one_stop = ch == '.' && end == k;
+                if one_stop && (TITLES.contains(&word.to_lowercase().as_str()) || (word.chars().count() == 1 && word.chars().all(char::is_uppercase))) {
+                    continue;
+                }
+                out.push(markup[start..chars[end].0].to_string());
+                start = chars[end].0 + 1;
+                k = end + 1;
+                depth = 0;
+            }
+            _ => {}
+        }
+    }
+    if start < markup.len() {
+        out.push(markup[start..].to_string());
+    }
+    out
 }
 
 /// Action: consecutive lines, each line break kept, and the spaces or tabs a
@@ -387,7 +439,7 @@ fn action(lines: &[(usize, &str)], mut i: usize, first: &str, mark: &str, out: &
         parts.push(format!("#metadata({})<q>{lead}{}", i + 1, inline(lines[i].1.trim())));
         i += 1;
     }
-    out.push_str(&format!("#action[{}]\n\n", parts.join(" \\\n")));
+    out.push_str(&format!("action[{}],\n\n", parts.join(" \\\n")));
     i
 }
 
@@ -413,24 +465,24 @@ mod tests {
         let src = "Title: Big Fish\nAuthor: John August\n\nEXT. FOREST - DAY\n\nNori runs.\nShe stops.\n\nNORI (V.O.)\n(whispering)\nDo you hear *that*?\n\nCUT TO:\n\n> THE END <\n";
         let out = t(src);
         assert!(out.contains("#titlepage(title: [Big Fish], credit: none, author: [John August]"), "{out}");
-        assert!(out.contains("#scene([#metadata(4)<q>EXT. FOREST \\- DAY], num: none)"), "{out}");
-        assert!(out.contains("#action[#metadata(6)<q>Nori runs. \\\n#metadata(7)<q>She stops.]"), "{out}");
+        assert!(out.contains("scene([#metadata(4)<q>EXT. FOREST \\- DAY], num: none)"), "{out}");
+        assert!(out.contains("action[#metadata(6)<q>Nori runs. \\\n#metadata(7)<q>She stops.]"), "{out}");
         assert!(
-            out.contains("#dialogue(9, [NORI (V.O.)])[\n#paren[#metadata(10)<q>(whispering)]\n#speech[#metadata(11)<q>Do you hear #emph[that]?]\n]\n\n"),
+            out.contains("dialogue(9, [NORI (V.O.)], (\n(paren: [#metadata(10)<q>(whispering)]),\n(say: (([#metadata(11)<q>Do you hear #emph[that]?],),)),\n)),\n\n"),
             "{out}"
         );
-        assert!(out.contains("#transition[#metadata(13)<q>CUT TO:]"), "{out}");
-        assert!(out.contains("#centered[#metadata(15)<q>THE END]"), "{out}");
+        assert!(out.contains("transition[#metadata(13)<q>CUT TO:]"), "{out}");
+        assert!(out.contains("centered[#metadata(15)<q>THE END]"), "{out}");
     }
 
     #[test]
     fn forced_elements_notes_and_numbers() {
         let out = t(".flashback #3#\n\n@McCLANE\nYippee [[a note]] ki-yay.\n\n!LOUD NOISES\n\n===\n");
-        assert!(out.contains("#scene([#metadata(1)<q>flashback], num: [3])"), "{out}");
-        assert!(out.contains("#dialogue(3, [McCLANE], forced: true, len: "), "{out}");
+        assert!(out.contains("scene([#metadata(1)<q>flashback], num: [3])"), "{out}");
+        assert!(out.contains("dialogue(3, [McCLANE], forced: true, (\n"), "{out}");
         assert!(out.contains("Yippee ki\\-yay."), "{out}");
-        assert!(out.contains("#action[#metadata(6)<q>LOUD NOISES]"), "{out}");
-        assert!(out.contains("#pagebreak(weak: true)"), "{out}");
+        assert!(out.contains("action[#metadata(6)<q>LOUD NOISES]"), "{out}");
+        assert!(out.contains("\n\nnewpage,\n\n"), "{out}");
         assert!(!out.contains("note"));
     }
 
@@ -445,42 +497,42 @@ mod tests {
         let src = "# ACT ONE\n\n## Scene 1\n\nMARIA\nHello.\n";
         assert!(!t(src).contains("#section"));
         let p = convert(src, Kind::Play).typst;
-        assert!(p.contains("#section(1, [#metadata(1)<q>ACT ONE])"), "{p}");
-        assert!(p.contains("#section(2, [#metadata(3)<q>Scene 1])"), "{p}");
+        assert!(p.contains("section(1, [#metadata(1)<q>ACT ONE])"), "{p}");
+        assert!(p.contains("section(2, [#metadata(3)<q>Scene 1])"), "{p}");
     }
 
     #[test]
     fn fade_in_is_not_a_title_page() {
         let out = t("FADE IN:\n\nINT. ROOM - DAY\n");
         assert!(out.starts_with("#titlepage()"), "{out}");
-        assert!(out.contains("#scene("), "{out}");
+        assert!(out.contains("scene("), "{out}");
     }
 
     #[test]
     fn only_known_keys_open_a_title_page() {
         let out = t("Fade in:\n\nINT. ROOM - DAY\n");
         assert!(out.starts_with("#titlepage()"), "{out}");
-        assert!(out.contains("#action[#metadata(1)<q>Fade in:]"), "{out}");
+        assert!(out.contains("action[#metadata(1)<q>Fade in:]"), "{out}");
         let out = t("TITLE: Big Fish\nAUTHOR: John August\n\nINT. ROOM - DAY\n");
         assert!(out.contains("#titlepage(title: [Big Fish], credit: none, author: [John August]"), "{out}");
-        assert!(out.contains("#scene([#metadata(4)<q>INT. ROOM \\- DAY]"), "{out}");
+        assert!(out.contains("scene([#metadata(4)<q>INT. ROOM \\- DAY]"), "{out}");
     }
 
     #[test]
     fn lyrics_in_blocks_and_in_dialogue() {
         let out = t("~Sing a song\n~of sixpence\n\nMARIA\nHello.\n~La la la\n");
-        assert!(out.contains("#lyric[#metadata(1)<q>Sing a song \\\n#metadata(2)<q>of sixpence]"), "{out}");
-        assert!(out.contains("#speech[#metadata(5)<q>Hello. \\\n#metadata(6)<q>#emph[La la la]]"), "{out}");
+        assert!(out.contains("lyric[#metadata(1)<q>Sing a song \\\n#metadata(2)<q>of sixpence]"), "{out}");
+        assert!(out.contains("(say: (([#metadata(5)<q>Hello.],), ([#metadata(6)<q>#emph[La la la]],),)),"), "{out}");
         assert!(!out.contains('~'), "{out}");
         let out = t("\nShe sings:\n~La la\n");
-        assert!(out.contains("#action[#metadata(2)<q>She sings:]"), "{out}");
-        assert!(out.contains("#lyric[#metadata(3)<q>La la]"), "{out}");
+        assert!(out.contains("action[#metadata(2)<q>She sings:]"), "{out}");
+        assert!(out.contains("lyric[#metadata(3)<q>La la]"), "{out}");
     }
 
     #[test]
     fn forced_action_runs_on() {
         let out = t("!BOOM\nThe walls shake.\n");
-        assert!(out.contains("#action[#metadata(1)<q>BOOM \\\n#metadata(2)<q>The walls shake.]"), "{out}");
+        assert!(out.contains("action[#metadata(1)<q>BOOM \\\n#metadata(2)<q>The walls shake.]"), "{out}");
         assert!(!out.contains("#cue"), "{out}");
     }
 
@@ -495,7 +547,7 @@ mod tests {
     #[test]
     fn lowercase_line_after_blank_is_action_not_cue() {
         let out = t("\nShe waits.\nNothing.\n");
-        assert!(out.contains("#action["), "{out}");
+        assert!(out.contains("action["), "{out}");
         assert!(!out.contains("#cue"));
     }
 
@@ -504,38 +556,39 @@ mod tests {
         let c = convert("BRICK\nScrew retirement.\n\nSTEEL ^\n(at once)\nScrew retirement.\n\nThey grin.\n", Kind::Screenplay);
         let out = &c.typst;
         assert!(out.contains(
-            "#dual[\n#cue(col: true)[#metadata(1)<q>BRICK]\n#speech(col: true)[#metadata(2)<q>Screw retirement.]\n][\n\
-             #cue(col: true)[#metadata(4)<q>STEEL]\n#paren(col: true)[#metadata(5)<q>(at once)]\n#speech(col: true)[#metadata(6)<q>Screw retirement.]\n]\n\n\
-             #action[#metadata(8)<q>They grin.]"
+            "dual(\ndialogue(1, [BRICK], (\n(say: (([#metadata(2)<q>Screw retirement.],),)),\n)),\n\
+             dialogue(4, [STEEL], (\n(paren: [#metadata(5)<q>(at once)]),\n(say: (([#metadata(6)<q>Screw retirement.],),)),\n)),\n),\n\n\
+             action[#metadata(8)<q>They grin.],"
         ), "{out}");
         assert!(!out.contains('^'), "{out}");
         // The source map still runs in order and points at both cues.
         assert!(c.map.windows(2).all(|w| w[0].0 <= w[1].0), "{:?}", c.map);
         let at = |o: &str| c.map.iter().find(|(t, _)| *t == out.find(o).unwrap()).map(|m| m.1);
-        assert_eq!(at("#cue(col: true)[#metadata(1)"), Some(0));
-        assert_eq!(at("#cue(col: true)[#metadata(4)"), Some(25));
+        assert_eq!(at("dialogue(1, "), Some(0));
+        assert_eq!(at("dialogue(4, "), Some(25));
     }
 
     #[test]
     fn caret_without_dialogue_before_is_a_plain_cue() {
         let out = t("\nThey sit.\n\n@McCLANE ^\nHi.\n");
-        assert!(!out.contains("#dual"), "{out}");
-        assert!(out.contains("#dialogue(4, [McCLANE], forced: true, len: 3)[\n#speech[#metadata(5)<q>Hi.]\n]\n"), "{out}");
+        assert!(!out.contains("dual("), "{out}");
+        assert!(out.contains("dialogue(4, [McCLANE], forced: true, (\n(say: (([#metadata(5)<q>Hi.],),)),\n)),\n"), "{out}");
         // Only the speech right before pairs up; a third ^ starts no new pair.
         let out = t("A\nOne.\n\nB ^\nTwo.\n\nC ^\nThree.\n");
-        assert_eq!(out.matches("#dual").count(), 1, "{out}");
-        assert!(out.contains("#dialogue(7, [C], len: 6)["), "{out}");
+        assert_eq!(out.matches("dual(").count(), 1, "{out}");
+        assert!(out.contains("dialogue(7, [C], (\n"), "{out}");
     }
 
     #[test]
     fn dialogue_is_one_call_the_template_can_carry_over_a_page() {
-        // Name, parentheticals and speech travel together, in order.
-        let c = convert("\nNORI\nOne.\nTwo.\n(beat)\n~La la\n\nShe waits.\n", Kind::Screenplay);
+        // Name, parentheticals and speech travel together, in order: each
+        // paragraph as its lines, each line as its sentences.
+        let c = convert("\nNORI\nOne. Two?\nThree.\n(beat)\n~La la. La.\n\nShe waits.\n", Kind::Screenplay);
         let out = &c.typst;
         assert!(
             out.contains(
-                "#dialogue(2, [NORI])[\n#speech[#metadata(3)<q>One. \\\n#metadata(4)<q>Two.]\n#paren[#metadata(5)<q>(beat)]\n\
-                 #speech[#metadata(6)<q>#emph[La la]]\n]\n\n#action[#metadata(8)<q>She waits.]"
+                "dialogue(2, [NORI], (\n(say: (([#metadata(3)<q>One.], [Two?],), ([#metadata(4)<q>Three.],),)),\n\
+                 (paren: [#metadata(5)<q>(beat)]),\n(say: (([#metadata(6)<q>#emph[La la. La.]],),)),\n)),\n\naction[#metadata(8)<q>She waits.],\n\n))\n"
             ),
             "{out}"
         );
@@ -543,17 +596,29 @@ mod tests {
         // name again on the next page, and the marker must not come twice.
         assert!(!out.contains("#metadata(2)<q>"), "{out}");
         assert!(c.map.windows(2).all(|w| w[0].0 <= w[1].0), "{:?}", c.map);
-        assert_eq!(c.map.iter().find(|(t, _)| *t == out.find("#dialogue(2").unwrap()).map(|m| m.1), Some(1));
-        // A name the writer already marked (CONT'D) is not marked again.
-        for name in ["NORI (CONT'D)", "NORI (cont’d)", "@Nori (V.O.) (CONT'D)"] {
-            assert!(t(&format!("\n{name}\nHi.\n")).contains("contd: true, len: 3)["), "{name}");
+        assert_eq!(c.map.iter().find(|(t, _)| *t == out.find("dialogue(2").unwrap()).map(|m| m.1), Some(1));
+        // A name the writer already marked as continuing is not marked again.
+        for name in ["NORI (CONT'D)", "NORI (cont’d)", "@Nori (V.O.) (CONT'D)", "NORI (continuing)"] {
+            assert!(t(&format!("\n{name}\nHi.\n")).contains(" contd: true, (\n"), "{name}");
         }
         assert!(!t("\nNORI (V.O.)\nHi.\n").contains("contd"));
-        // Only a speech of one paragraph says how long it is.
-        assert!(t("\nNORI\nDo you hear that?\n").contains("#dialogue(2, [NORI], len: 17)["));
-        assert!(!t("\nNORI\n(low)\nHi.\n").contains("len:"));
-        assert!(!t("\nNORI\n(low)\n").contains("len:"));
-        // Dual dialogue is never split: no #dialogue inside #dual.
-        assert!(!t("A\nOne.\n\nB ^\nTwo.\n").contains("#dialogue"));
+        // A name with nothing said, and a line of spaces inside a speech.
+        assert!(t("\n@Nori\n\nShe waits.\n").contains("dialogue(2, [Nori], forced: true, (\n)),\n"));
+        assert!(t("\nNORI\nOne.\n  \nTwo.\n").contains("([#metadata(4)<q>],)"));
+    }
+
+    #[test]
+    fn speech_splits_into_sentences() {
+        let s = |x: &str| sentences(&inline(x));
+        assert_eq!(s("Do you hear that? I do. So we wait."), ["Do you hear that?", "I do.", "So we wait."]);
+        // Closing quotes, brackets and dashes stay with their sentence.
+        assert_eq!(s("\"Stop!\" (He did.) What--? Well..."), ["\"Stop!\"", "(He did.)", "What\\-\\-?", "Well..."]);
+        assert_eq!(s("No?! Really… Yes."), ["No?!", "Really…", "Yes."]);
+        // Not at a pause, an initial, a title or a number.
+        assert_eq!(s("Well... maybe. Mr. Fox and J. Smith paid 3.50 each."), ["Well... maybe.", "Mr. Fox and J. Smith paid 3.50 each."]);
+        // Emphasis is kept whole, and a sentence may end where it ends.
+        assert_eq!(s("*Stop. Now.* Go **on.** Please."), ["#emph[Stop. Now.]", "Go #strong[on.]", "Please."]);
+        assert_eq!(s("One."), ["One."]);
+        assert!(s("").is_empty());
     }
 }

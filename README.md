@@ -152,9 +152,11 @@ margin, characters at 3.7 in, dialogue at 2.5 in, page numbers top right from
 page 2, about a minute of screen time per page. A4 keeps the same measures.
 A `^` after a character's name (`STEEL ^`) prints their speech side by side
 with the one before it: dual dialogue, two people talking at once. A speech
-that crosses a page gets `(MORE)` under its last line there and the name again
-with `(CONT'D)` on the next page, in stage plays too; at least two lines stay
-on each side, and a parenthetical stays with the words after it.
+that crosses a page breaks at the end of a sentence where it can, with at
+least two lines on each side and a parenthetical kept with the words after it.
+A screenplay prints `(MORE)` under its last line on the page and the name
+again with `(CONT'D)` on the next; a stage play repeats the name with
+`(continuing)`.
 
 ## Fonts and page setups
 
