@@ -150,8 +150,9 @@ make scene headings, characters, parentheticals, transitions and centred text.
 Screenplays print in the standard layout: Courier Prime 12 pt, 1.5 in left
 margin, characters at 3.7 in, dialogue at 2.5 in, page numbers top right from
 page 2, about a minute of screen time per page. A4 keeps the same measures.
-Not yet: `(MORE)` / `(CONT'D)` when a speech crosses a page, and dual dialogue
-side by side (`^` is accepted and printed one after the other).
+A `^` after a character's name (`STEEL ^`) prints their speech side by side
+with the one before it: dual dialogue, two people talking at once. Not yet:
+`(MORE)` / `(CONT'D)` when a speech crosses a page.
 
 ## Fonts and page setups
 
